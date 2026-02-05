@@ -508,3 +508,26 @@ test('addLicensesToSummary() - includes allowed dependency licences', () => {
     '<details><summary><strong>Excluded from license check</strong>:</summary> MIT, Apache-2.0</details>'
   )
 })
+
+test('addVulnerabilitiesWithRemediation() - includes patched versions column', async () => {
+  // Mock the repo-token input
+  jest.spyOn(core, 'getInput').mockReturnValue('test-token')
+
+  const changes = [
+    createTestChange({
+      name: 'test-pkg',
+      vulnerabilities: [
+        createTestVulnerability({
+          advisory_ghsa_id: 'GHSA-test-1234',
+          advisory_summary: 'Test vulnerability'
+        })
+      ]
+    })
+  ]
+
+  await summary.addVulnerabilitiesWithRemediation(changes, 'low')
+
+  const text = core.summary.stringify()
+  expect(text).toContain('Patched Versions')
+  expect(text).toContain('test-pkg')
+})
