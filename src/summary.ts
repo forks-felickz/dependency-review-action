@@ -2,8 +2,12 @@ import * as core from '@actions/core'
 import {SummaryTableRow} from '@actions/core/lib/summary'
 import {InvalidLicenseChanges, InvalidLicenseChangeTypes} from './licenses'
 import {Change, Changes, ConfigurationOptions, Scorecard} from './schemas'
-import {groupDependenciesByManifest, getManifestsSet, renderUrl} from './utils'
-import {octokitClient} from './utils'
+import {
+  groupDependenciesByManifest,
+  getManifestsSet,
+  renderUrl,
+  octokitClient
+} from './utils'
 
 const icons = {
   check: '✅',
@@ -12,6 +16,49 @@ const icons = {
 }
 
 const MAX_SCANNED_FILES_BYTES = 1048576
+
+// Helper to check if a version falls within a vulnerable range
+// Supports basic semver comparisons like ">= 8.0.0, <= 8.0.20"
+function versionInRange(version: string, range: string): boolean {
+  if (!version || !range) return false
+
+  // Parse version into comparable parts
+  const vParts = version.split('.').map(p => parseInt(p, 10))
+
+  // Handle range formats like ">= 8.0.0, <= 8.0.20"
+  const conditions = range.split(',').map(c => c.trim())
+
+  for (const condition of conditions) {
+    const match = condition.match(/([><=]+)\s*(\d+(?:\.\d+)*)/)
+    if (!match) continue
+
+    const [, operator, rangeVer] = match
+    const rParts = rangeVer.split('.').map(p => parseInt(p, 10))
+
+    // Compare versions part by part
+    let cmp = 0
+    for (let i = 0; i < Math.max(vParts.length, rParts.length); i++) {
+      const v = vParts[i] || 0
+      const r = rParts[i] || 0
+      if (v > r) {
+        cmp = 1
+        break
+      } else if (v < r) {
+        cmp = -1
+        break
+      }
+    }
+
+    // Check if condition is satisfied
+    if (operator === '>=' && cmp < 0) return false
+    if (operator === '>' && cmp <= 0) return false
+    if (operator === '<=' && cmp > 0) return false
+    if (operator === '<' && cmp >= 0) return false
+    if (operator === '=' && cmp !== 0) return false
+  }
+
+  return true
+}
 
 function extractPatchVersionId(patchData: unknown): string | null {
   if (!patchData || typeof patchData !== 'object') return null
@@ -150,7 +197,7 @@ export async function addChangeVulnerabilitiesToSummary(
 
   const rows: SummaryTableRow[] = []
   const manifests = getManifestsSet(vulnerableChanges)
-  
+
   // Build set of unique advisories to query
   const advisorySet = new Set<string>()
   for (const pkg of vulnerableChanges) {
@@ -158,34 +205,47 @@ export async function addChangeVulnerabilitiesToSummary(
       advisorySet.add(vuln.advisory_ghsa_id)
     }
   }
-  
+
   // Query GitHub API for patch info in parallel
-  const patchInfo: Record<string, Record<string, string>> = {}
+  // Store all vulnerability entries (may be multiple per package with different ranges)
+  const patchInfo: Record<
+    string,
+    {eco: string; pkg: string; range: string; patch: string}[]
+  > = {}
   const apiClient = octokitClient()
-  
-  await Promise.all(Array.from(advisorySet).map(async advId => {
-    try {
-      const apiResult = await apiClient.request('GET /advisories/{ghsa_id}', {
-        ghsa_id: advId
-      })
-      
-      patchInfo[advId] = {}
-      const vulnList = apiResult.data.vulnerabilities || []
-      
-      for (const v of vulnList) {
-        if (v.package && v.package.ecosystem) {
-          const normalizedEco = v.package.ecosystem.toLowerCase()
-          const patchVerId = extractPatchVersionId(v.first_patched_version)
-          if (patchVerId) {
-            patchInfo[advId][normalizedEco] = patchVerId
+
+  await Promise.all(
+    Array.from(advisorySet).map(async advId => {
+      try {
+        const apiResult = await apiClient.request('GET /advisories/{ghsa_id}', {
+          ghsa_id: advId
+        })
+
+        patchInfo[advId] = []
+        const vulnList = apiResult.data.vulnerabilities || []
+
+        for (const v of vulnList) {
+          if (v.package && v.package.ecosystem) {
+            const normalizedEco = v.package.ecosystem.toLowerCase()
+            const pkgName = v.package.name || ''
+            const vulnRange = v.vulnerable_version_range || ''
+            const patchVerId = extractPatchVersionId(v.first_patched_version)
+            if (patchVerId) {
+              patchInfo[advId].push({
+                eco: normalizedEco,
+                pkg: pkgName,
+                range: vulnRange,
+                patch: patchVerId
+              })
+            }
           }
         }
+      } catch (e) {
+        core.debug(`API call failed for ${advId}: ${e}`)
+        patchInfo[advId] = []
       }
-    } catch (e) {
-      core.debug(`API call failed for ${advId}: ${e}`)
-      patchInfo[advId] = {}
-    }
-  }))
+    })
+  )
 
   core.summary.addHeading('Vulnerabilities', 2)
 
@@ -200,12 +260,21 @@ export async function addChangeVulnerabilitiesToSummary(
           previous_package === change.name &&
           previous_version === change.version
 
-        // Look up patch version with normalized ecosystem
+        // Look up patch version by matching package name, ecosystem, and version range
         let patchVer = 'N/A'
         const advData = patchInfo[vuln.advisory_ghsa_id]
-        if (advData) {
+        if (advData && advData.length > 0) {
           const normalizedEco = change.ecosystem.toLowerCase()
-          patchVer = advData[normalizedEco] || 'N/A'
+          // Find matching entry by ecosystem, package name, and version range
+          const matchingEntry = advData.find(
+            entry =>
+              entry.eco === normalizedEco &&
+              entry.pkg === change.name &&
+              versionInRange(change.version, entry.range)
+          )
+          if (matchingEntry) {
+            patchVer = matchingEntry.patch
+          }
         }
 
         if (!sameAsPrevious) {

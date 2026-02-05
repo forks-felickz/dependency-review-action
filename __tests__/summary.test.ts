@@ -12,7 +12,7 @@ beforeEach(() => {
   jest.spyOn(utils, 'octokitClient').mockReturnValue({
     request: mockOctokitRequest
   } as any)
-  
+
   mockOctokitRequest.mockResolvedValue({
     data: {vulnerabilities: []}
   })
@@ -529,4 +529,69 @@ test('addLicensesToSummary() - includes allowed dependency licences', () => {
   expect(text).toContain(
     '<details><summary><strong>Excluded from license check</strong>:</summary> MIT, Apache-2.0</details>'
   )
+})
+
+test('addChangeVulnerabilitiesToSummary() - handles multiple version ranges for same package', async () => {
+  // Simulates GHSA-gwq6-fmvp-qp68 scenario with multiple version ranges
+  const pkg8 = createTestChange({
+    ecosystem: 'nuget',
+    name: 'Microsoft.NetCore.App.Runtime.linux-arm',
+    version: '8.0.1',
+    vulnerabilities: [
+      createTestVulnerability({
+        advisory_ghsa_id: 'GHSA-test-multi',
+        advisory_summary: 'Test Multi-Range Advisory',
+        severity: 'high'
+      })
+    ]
+  })
+
+  const pkg9 = createTestChange({
+    ecosystem: 'nuget',
+    name: 'Microsoft.NetCore.App.Runtime.linux-arm',
+    version: '9.0.1',
+    vulnerabilities: [
+      createTestVulnerability({
+        advisory_ghsa_id: 'GHSA-test-multi',
+        advisory_summary: 'Test Multi-Range Advisory',
+        severity: 'high'
+      })
+    ]
+  })
+
+  // Mock API response with multiple version ranges for same package
+  mockOctokitRequest.mockResolvedValueOnce({
+    data: {
+      vulnerabilities: [
+        {
+          package: {
+            ecosystem: 'NuGet',
+            name: 'Microsoft.NetCore.App.Runtime.linux-arm'
+          },
+          vulnerable_version_range: '>= 8.0.0, <= 8.0.20',
+          first_patched_version: {identifier: '8.0.21'}
+        },
+        {
+          package: {
+            ecosystem: 'NuGet',
+            name: 'Microsoft.NetCore.App.Runtime.linux-arm'
+          },
+          vulnerable_version_range: '>= 9.0.0, <= 9.0.9',
+          first_patched_version: {identifier: '9.0.10'}
+        }
+      ]
+    }
+  })
+
+  const changes = [pkg8, pkg9]
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+
+  const text = core.summary.stringify()
+
+  // Both packages should have correct patched versions based on their version ranges
+  expect(text).toContain('8.0.21')
+  expect(text).toContain('9.0.10')
+  expect(mockOctokitRequest).toHaveBeenCalledWith('GET /advisories/{ghsa_id}', {
+    ghsa_id: 'GHSA-test-multi'
+  })
 })
