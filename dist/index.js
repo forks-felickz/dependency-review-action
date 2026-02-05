@@ -1654,6 +1654,14 @@ const icons = {
     warning: '⚠️'
 };
 const MAX_SCANNED_FILES_BYTES = 1048576;
+function extractPatchVersionId(patchData) {
+    if (!patchData || typeof patchData !== 'object')
+        return null;
+    if (!('identifier' in patchData))
+        return null;
+    const id = patchData.identifier;
+    return typeof id === 'string' ? id : null;
+}
 // generates the DR report summary and caches it to the Action's core.summary.
 // returns the DR summary string, ready to be posted as a PR comment if the
 // final DR report is too large
@@ -1760,11 +1768,10 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 const vulnList = apiResult.data.vulnerabilities || [];
                 for (const v of vulnList) {
                     if (v.package && v.package.ecosystem) {
-                        // Normalize ecosystem to lowercase for consistent lookups
                         const normalizedEco = v.package.ecosystem.toLowerCase();
-                        const patchVer = v.first_patched_version;
-                        if (patchVer && typeof patchVer === 'object' && patchVer !== null && 'identifier' in patchVer && typeof patchVer.identifier === 'string') {
-                            patchInfo[advId][normalizedEco] = patchVer.identifier;
+                        const patchVerId = extractPatchVersionId(v.first_patched_version);
+                        if (patchVerId) {
+                            patchInfo[advId][normalizedEco] = patchVerId;
                         }
                     }
                 }
