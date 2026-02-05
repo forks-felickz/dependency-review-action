@@ -1786,14 +1786,13 @@ function addVulnerabilitiesWithRemediation(vulnerableChanges, severity) {
         if (vulnerableChanges.length === 0) {
             return;
         }
-        const rows = [];
         const manifests = (0, utils_1.getManifestsSet)(vulnerableChanges);
         const api = (0, utils_1.octokitClient)();
-        const fixCache = {};
+        const patchedVersionsCache = {};
         const fetchPromises = {};
         core.summary.addHeading('Vulnerabilities', 2);
         for (const manifest of manifests) {
-            rows.length = 0;
+            const rows = [];
             for (const change of vulnerableChanges.filter(pkg => pkg.manifest === manifest)) {
                 let previous_package = '';
                 let previous_version = '';
@@ -1801,18 +1800,28 @@ function addVulnerabilitiesWithRemediation(vulnerableChanges, severity) {
                     const sameAsPrevious = previous_package === change.name &&
                         previous_version === change.version;
                     const ghsaKey = vuln.advisory_ghsa_id;
-                    if (!fixCache[ghsaKey] && !fetchPromises[ghsaKey]) {
-                        fetchPromises[ghsaKey] = api.request('GET /advisories/{ghsa_id}', { ghsa_id: ghsaKey })
-                            .then(r => {
-                            const vList = r.data.vulnerabilities || [];
-                            const patchVers = [];
-                            vList.forEach((v) => {
-                                if (v.patched_versions)
-                                    patchVers.push(v.patched_versions);
-                            });
-                            fixCache[ghsaKey] = patchVers.length ? patchVers.join(', ') : 'See advisory';
-                        })
-                            .catch(() => { fixCache[ghsaKey] = 'N/A'; });
+                    if (!patchedVersionsCache[ghsaKey] && !fetchPromises[ghsaKey]) {
+                        fetchPromises[ghsaKey] = (() => __awaiter(this, void 0, void 0, function* () {
+                            try {
+                                const r = yield api.request('GET /advisories/{ghsa_id}', {
+                                    ghsa_id: ghsaKey
+                                });
+                                const vList = r.data.vulnerabilities || [];
+                                const patchVers = [];
+                                for (const v of vList) {
+                                    // first_patched_version contains the first version with the fix
+                                    if (v.first_patched_version) {
+                                        patchVers.push(v.first_patched_version);
+                                    }
+                                }
+                                patchedVersionsCache[ghsaKey] = patchVers.length
+                                    ? patchVers.join(', ')
+                                    : 'See advisory';
+                            }
+                            catch (_a) {
+                                patchedVersionsCache[ghsaKey] = 'N/A';
+                            }
+                        }))();
                     }
                     if (!sameAsPrevious) {
                         rows.push([
@@ -1820,7 +1829,7 @@ function addVulnerabilitiesWithRemediation(vulnerableChanges, severity) {
                             change.version,
                             (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
                             vuln.severity,
-                            '__PLACEHOLDER_' + ghsaKey
+                            `__PLACEHOLDER_${ghsaKey}`
                         ]);
                     }
                     else {
@@ -1828,7 +1837,7 @@ function addVulnerabilitiesWithRemediation(vulnerableChanges, severity) {
                             { data: '', colspan: '2' },
                             (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
                             vuln.severity,
-                            '__PLACEHOLDER_' + ghsaKey
+                            `__PLACEHOLDER_${ghsaKey}`
                         ]);
                     }
                     previous_package = change.name;
@@ -1840,9 +1849,10 @@ function addVulnerabilitiesWithRemediation(vulnerableChanges, severity) {
                 if (Array.isArray(row)) {
                     const lastIdx = row.length - 1;
                     const placeholder = row[lastIdx];
-                    if (typeof placeholder === 'string' && placeholder.startsWith('__PLACEHOLDER_')) {
+                    if (typeof placeholder === 'string' &&
+                        placeholder.startsWith('__PLACEHOLDER_')) {
                         const ghsaKey = placeholder.substring(14);
-                        row[lastIdx] = fixCache[ghsaKey] || 'N/A';
+                        row[lastIdx] = patchedVersionsCache[ghsaKey] || 'N/A';
                     }
                 }
             }

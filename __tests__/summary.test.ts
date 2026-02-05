@@ -512,7 +512,7 @@ test('addLicensesToSummary() - includes allowed dependency licences', () => {
 test('addVulnerabilitiesWithRemediation() - includes patched versions column', async () => {
   // Mock the repo-token input
   jest.spyOn(core, 'getInput').mockReturnValue('test-token')
-  
+
   const changes = [
     createTestChange({
       name: 'test-pkg',
