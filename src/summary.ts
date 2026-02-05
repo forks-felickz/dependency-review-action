@@ -3,6 +3,7 @@ import {SummaryTableRow} from '@actions/core/lib/summary'
 import {InvalidLicenseChanges, InvalidLicenseChangeTypes} from './licenses'
 import {Change, Changes, ConfigurationOptions, Scorecard} from './schemas'
 import {groupDependenciesByManifest, getManifestsSet, renderUrl} from './utils'
+import {octokitClient} from './utils'
 
 const icons = {
   check: '✅',
@@ -132,17 +133,54 @@ function countScorecardWarnings(
   )
 }
 
-export function addChangeVulnerabilitiesToSummary(
+export async function addChangeVulnerabilitiesToSummary(
   vulnerableChanges: Changes,
   severity: string
-): void {
+): Promise<void> {
   if (vulnerableChanges.length === 0) {
     return
   }
 
   const rows: SummaryTableRow[] = []
-
   const manifests = getManifestsSet(vulnerableChanges)
+  
+  // Build list of advisories to query
+  const advisoryIds: string[] = []
+  for (const pkg of vulnerableChanges) {
+    for (const vuln of pkg.vulnerabilities) {
+      if (!advisoryIds.includes(vuln.advisory_ghsa_id)) {
+        advisoryIds.push(vuln.advisory_ghsa_id)
+      }
+    }
+  }
+  
+  // Query GitHub API for patch info
+  const patchInfo: Record<string, Record<string, string>> = {}
+  const apiClient = octokitClient()
+  
+  for (const advId of advisoryIds) {
+    try {
+      const apiResult = await apiClient.request('GET /advisories/{ghsa_id}', {
+        ghsa_id: advId
+      })
+      
+      patchInfo[advId] = {}
+      const vulnList = apiResult.data.vulnerabilities || []
+      
+      for (const v of vulnList) {
+        if (v.package && v.package.ecosystem) {
+          const eco = v.package.ecosystem
+          const patchVer = v.first_patched_version as any
+          if (patchVer && patchVer.identifier) {
+            patchInfo[advId][eco] = patchVer.identifier
+          }
+        }
+      }
+    } catch (e) {
+      core.debug(`API call failed for ${advId}: ${e}`)
+      patchInfo[advId] = {}
+    }
+  }
 
   core.summary.addHeading('Vulnerabilities', 2)
 
@@ -157,18 +195,39 @@ export function addChangeVulnerabilitiesToSummary(
           previous_package === change.name &&
           previous_version === change.version
 
+        // Look up patch version
+        let patchVer = 'N/A'
+        const advData = patchInfo[vuln.advisory_ghsa_id]
+        if (advData) {
+          // Try exact match
+          if (advData[change.ecosystem]) {
+            patchVer = advData[change.ecosystem]
+          } else {
+            // Try case-insensitive
+            const lowerEco = change.ecosystem.toLowerCase()
+            for (const [k, v] of Object.entries(advData)) {
+              if (k.toLowerCase() === lowerEco) {
+                patchVer = v
+                break
+              }
+            }
+          }
+        }
+
         if (!sameAsPrevious) {
           rows.push([
             renderUrl(change.source_repository_url, change.name),
             change.version,
             renderUrl(vuln.advisory_url, vuln.advisory_summary),
-            vuln.severity
+            vuln.severity,
+            patchVer
           ])
         } else {
           rows.push([
             {data: '', colspan: '2'},
             renderUrl(vuln.advisory_url, vuln.advisory_summary),
-            vuln.severity
+            vuln.severity,
+            patchVer
           ])
         }
         previous_package = change.name
@@ -180,7 +239,8 @@ export function addChangeVulnerabilitiesToSummary(
         {data: 'Name', header: true},
         {data: 'Version', header: true},
         {data: 'Vulnerability', header: true},
-        {data: 'Severity', header: true}
+        {data: 'Severity', header: true},
+        {data: 'Patched Version', header: true}
       ],
       ...rows
     ])

@@ -193,7 +193,7 @@ async function run(): Promise<void> {
 
     if (config.vulnerability_check) {
       core.setOutput('vulnerable-changes', JSON.stringify(vulnerableChanges))
-      summary.addChangeVulnerabilitiesToSummary(vulnerableChanges, minSeverity)
+      await summary.addChangeVulnerabilitiesToSummary(vulnerableChanges, minSeverity)
       issueFound ||= await printVulnerabilitiesBlock(
         vulnerableChanges,
         minSeverity,

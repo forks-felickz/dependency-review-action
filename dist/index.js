@@ -779,7 +779,7 @@ function run() {
             let issueFound = false;
             if (config.vulnerability_check) {
                 core.setOutput('vulnerable-changes', JSON.stringify(vulnerableChanges));
-                summary.addChangeVulnerabilitiesToSummary(vulnerableChanges, minSeverity);
+                yield summary.addChangeVulnerabilitiesToSummary(vulnerableChanges, minSeverity);
                 issueFound || (issueFound = yield printVulnerabilitiesBlock(vulnerableChanges, minSeverity, warnOnly));
             }
             if (config.license_check) {
@@ -1628,6 +1628,15 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.addSummaryToSummary = addSummaryToSummary;
 exports.addChangeVulnerabilitiesToSummary = addChangeVulnerabilitiesToSummary;
@@ -1638,6 +1647,7 @@ exports.addSnapshotWarnings = addSnapshotWarnings;
 exports.addDeniedToSummary = addDeniedToSummary;
 const core = __importStar(__nccwpck_require__(37484));
 const utils_1 = __nccwpck_require__(69277);
+const utils_2 = __nccwpck_require__(69277);
 const icons = {
     check: '✅',
     cross: '❌',
@@ -1725,51 +1735,109 @@ function countScorecardWarnings(scorecard, config) {
     }, 0);
 }
 function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
-    if (vulnerableChanges.length === 0) {
-        return;
-    }
-    const rows = [];
-    const manifests = (0, utils_1.getManifestsSet)(vulnerableChanges);
-    core.summary.addHeading('Vulnerabilities', 2);
-    for (const manifest of manifests) {
-        for (const change of vulnerableChanges.filter(pkg => pkg.manifest === manifest)) {
-            let previous_package = '';
-            let previous_version = '';
-            for (const vuln of change.vulnerabilities) {
-                const sameAsPrevious = previous_package === change.name &&
-                    previous_version === change.version;
-                if (!sameAsPrevious) {
-                    rows.push([
-                        (0, utils_1.renderUrl)(change.source_repository_url, change.name),
-                        change.version,
-                        (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
-                        vuln.severity
-                    ]);
+    return __awaiter(this, void 0, void 0, function* () {
+        if (vulnerableChanges.length === 0) {
+            return;
+        }
+        const rows = [];
+        const manifests = (0, utils_1.getManifestsSet)(vulnerableChanges);
+        // Build list of advisories to query
+        const advisoryIds = [];
+        for (const pkg of vulnerableChanges) {
+            for (const vuln of pkg.vulnerabilities) {
+                if (!advisoryIds.includes(vuln.advisory_ghsa_id)) {
+                    advisoryIds.push(vuln.advisory_ghsa_id);
                 }
-                else {
-                    rows.push([
-                        { data: '', colspan: '2' },
-                        (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
-                        vuln.severity
-                    ]);
-                }
-                previous_package = change.name;
-                previous_version = change.version;
             }
         }
-        core.summary.addHeading(`<em>${manifest}</em>`, 4).addTable([
-            [
-                { data: 'Name', header: true },
-                { data: 'Version', header: true },
-                { data: 'Vulnerability', header: true },
-                { data: 'Severity', header: true }
-            ],
-            ...rows
-        ]);
-    }
-    if (severity !== 'low') {
-        core.summary.addQuote(`Only included vulnerabilities with severity <strong>${severity}</strong> or higher.`);
-    }
+        // Query GitHub API for patch info
+        const patchInfo = {};
+        const apiClient = (0, utils_2.octokitClient)();
+        for (const advId of advisoryIds) {
+            try {
+                const apiResult = yield apiClient.request('GET /advisories/{ghsa_id}', {
+                    ghsa_id: advId
+                });
+                patchInfo[advId] = {};
+                const vulnList = apiResult.data.vulnerabilities || [];
+                for (const v of vulnList) {
+                    if (v.package && v.package.ecosystem) {
+                        const eco = v.package.ecosystem;
+                        const patchVer = v.first_patched_version;
+                        if (patchVer && patchVer.identifier) {
+                            patchInfo[advId][eco] = patchVer.identifier;
+                        }
+                    }
+                }
+            }
+            catch (e) {
+                core.debug(`API call failed for ${advId}: ${e}`);
+                patchInfo[advId] = {};
+            }
+        }
+        core.summary.addHeading('Vulnerabilities', 2);
+        for (const manifest of manifests) {
+            for (const change of vulnerableChanges.filter(pkg => pkg.manifest === manifest)) {
+                let previous_package = '';
+                let previous_version = '';
+                for (const vuln of change.vulnerabilities) {
+                    const sameAsPrevious = previous_package === change.name &&
+                        previous_version === change.version;
+                    // Look up patch version
+                    let patchVer = 'N/A';
+                    const advData = patchInfo[vuln.advisory_ghsa_id];
+                    if (advData) {
+                        // Try exact match
+                        if (advData[change.ecosystem]) {
+                            patchVer = advData[change.ecosystem];
+                        }
+                        else {
+                            // Try case-insensitive
+                            const lowerEco = change.ecosystem.toLowerCase();
+                            for (const [k, v] of Object.entries(advData)) {
+                                if (k.toLowerCase() === lowerEco) {
+                                    patchVer = v;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!sameAsPrevious) {
+                        rows.push([
+                            (0, utils_1.renderUrl)(change.source_repository_url, change.name),
+                            change.version,
+                            (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
+                            vuln.severity,
+                            patchVer
+                        ]);
+                    }
+                    else {
+                        rows.push([
+                            { data: '', colspan: '2' },
+                            (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
+                            vuln.severity,
+                            patchVer
+                        ]);
+                    }
+                    previous_package = change.name;
+                    previous_version = change.version;
+                }
+            }
+            core.summary.addHeading(`<em>${manifest}</em>`, 4).addTable([
+                [
+                    { data: 'Name', header: true },
+                    { data: 'Version', header: true },
+                    { data: 'Vulnerability', header: true },
+                    { data: 'Severity', header: true },
+                    { data: 'Patched Version', header: true }
+                ],
+                ...rows
+            ]);
+        }
+        if (severity !== 'low') {
+            core.summary.addQuote(`Only included vulnerabilities with severity <strong>${severity}</strong> or higher.`);
+        }
+    });
 }
 function addLicensesToSummary(invalidLicenseChanges, config) {
     if (countLicenseIssues(invalidLicenseChanges) === 0) {

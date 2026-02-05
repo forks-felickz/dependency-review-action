@@ -1,9 +1,22 @@
-import {expect, jest, test} from '@jest/globals'
+import {expect, jest, test, beforeEach} from '@jest/globals'
 import {Changes, ConfigurationOptions, Scorecard} from '../src/schemas'
 import * as summary from '../src/summary'
 import * as core from '@actions/core'
 import {createTestChange} from './fixtures/create-test-change'
 import {createTestVulnerability} from './fixtures/create-test-vulnerability'
+import * as utils from '../src/utils'
+
+const mockOctokitRequest = jest.fn<any>()
+
+beforeEach(() => {
+  jest.spyOn(utils, 'octokitClient').mockReturnValue({
+    request: mockOctokitRequest
+  } as any)
+  
+  mockOctokitRequest.mockResolvedValue({
+    data: {vulnerabilities: []}
+  })
+})
 
 afterEach(() => {
   jest.clearAllMocks()
@@ -315,19 +328,19 @@ test('uses checkmarks for vulnerabilities if only license issues were found', ()
   expect(text).toContain('✅ 0 package(s) with unknown licenses')
 })
 
-test('addChangeVulnerabilitiesToSummary() - only includes section if any vulnerabilities found', () => {
-  summary.addChangeVulnerabilitiesToSummary(emptyChanges, 'low')
+test('addChangeVulnerabilitiesToSummary() - only includes section if any vulnerabilities found', async () => {
+  await summary.addChangeVulnerabilitiesToSummary(emptyChanges, 'low')
   const text = core.summary.stringify()
   expect(text).toEqual('')
 })
 
-test('addChangeVulnerabilitiesToSummary() - includes all vulnerabilities', () => {
+test('addChangeVulnerabilitiesToSummary() - includes all vulnerabilities', async () => {
   const changes = [
     createTestChange({name: 'lodash'}),
     createTestChange({name: 'underscore', package_url: 'test-url'})
   ]
 
-  summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
 
   const text = core.summary.stringify()
   expect(text).toContain('<h2>Vulnerabilities</h2>')
@@ -335,7 +348,7 @@ test('addChangeVulnerabilitiesToSummary() - includes all vulnerabilities', () =>
   expect(text).toContain('underscore')
 })
 
-test('addChangeVulnerabilitiesToSummary() - includes advisory url if available', () => {
+test('addChangeVulnerabilitiesToSummary() - includes advisory url if available', async () => {
   const changes = [
     createTestChange({
       name: 'underscore',
@@ -348,14 +361,14 @@ test('addChangeVulnerabilitiesToSummary() - includes advisory url if available',
     })
   ]
 
-  summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
 
   const text = core.summary.stringify()
   expect(text).toContain('lodash')
   expect(text).toContain('<a href="test-url">test-summary</a>')
 })
 
-test('addChangeVulnerabilitiesToSummary() - groups vulnerabilities of a single package', () => {
+test('addChangeVulnerabilitiesToSummary() - groups vulnerabilities of a single package', async () => {
   const changes = [
     createTestChange({
       name: 'package-with-multiple-vulnerabilities',
@@ -366,7 +379,7 @@ test('addChangeVulnerabilitiesToSummary() - groups vulnerabilities of a single p
     })
   ]
 
-  summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
 
   const text = core.summary.stringify()
   expect(text.match('package-with-multiple-vulnerabilities')).toHaveLength(1)
@@ -374,10 +387,10 @@ test('addChangeVulnerabilitiesToSummary() - groups vulnerabilities of a single p
   expect(text).toContain('test-summary-2')
 })
 
-test('addChangeVulnerabilitiesToSummary() - prints severity statement if above low', () => {
+test('addChangeVulnerabilitiesToSummary() - prints severity statement if above low', async () => {
   const changes = [createTestChange()]
 
-  summary.addChangeVulnerabilitiesToSummary(changes, 'medium')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'medium')
 
   const text = core.summary.stringify()
   expect(text).toContain(
@@ -385,13 +398,22 @@ test('addChangeVulnerabilitiesToSummary() - prints severity statement if above l
   )
 })
 
-test('addChangeVulnerabilitiesToSummary() - does not print severity statement if it is set to "low"', () => {
+test('addChangeVulnerabilitiesToSummary() - does not print severity statement if it is set to "low"', async () => {
   const changes = [createTestChange()]
 
-  summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
 
   const text = core.summary.stringify()
   expect(text).not.toContain('Only included vulnerabilities')
+})
+
+test('addChangeVulnerabilitiesToSummary() - includes patched version column', async () => {
+  const changes = [createTestChange()]
+
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+
+  const text = core.summary.stringify()
+  expect(text).toContain('Patched Version')
 })
 
 test('addLicensesToSummary() - does not include entire section if no license issues found', () => {
