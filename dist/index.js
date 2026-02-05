@@ -1741,19 +1741,17 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
         }
         const rows = [];
         const manifests = (0, utils_1.getManifestsSet)(vulnerableChanges);
-        // Build list of advisories to query
-        const advisoryIds = [];
+        // Build set of unique advisories to query
+        const advisorySet = new Set();
         for (const pkg of vulnerableChanges) {
             for (const vuln of pkg.vulnerabilities) {
-                if (!advisoryIds.includes(vuln.advisory_ghsa_id)) {
-                    advisoryIds.push(vuln.advisory_ghsa_id);
-                }
+                advisorySet.add(vuln.advisory_ghsa_id);
             }
         }
-        // Query GitHub API for patch info
+        // Query GitHub API for patch info in parallel
         const patchInfo = {};
         const apiClient = (0, utils_2.octokitClient)();
-        for (const advId of advisoryIds) {
+        yield Promise.all(Array.from(advisorySet).map((advId) => __awaiter(this, void 0, void 0, function* () {
             try {
                 const apiResult = yield apiClient.request('GET /advisories/{ghsa_id}', {
                     ghsa_id: advId
@@ -1774,7 +1772,7 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 core.debug(`API call failed for ${advId}: ${e}`);
                 patchInfo[advId] = {};
             }
-        }
+        })));
         core.summary.addHeading('Vulnerabilities', 2);
         for (const manifest of manifests) {
             for (const change of vulnerableChanges.filter(pkg => pkg.manifest === manifest)) {

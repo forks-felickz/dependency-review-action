@@ -144,21 +144,19 @@ export async function addChangeVulnerabilitiesToSummary(
   const rows: SummaryTableRow[] = []
   const manifests = getManifestsSet(vulnerableChanges)
   
-  // Build list of advisories to query
-  const advisoryIds: string[] = []
+  // Build set of unique advisories to query
+  const advisorySet = new Set<string>()
   for (const pkg of vulnerableChanges) {
     for (const vuln of pkg.vulnerabilities) {
-      if (!advisoryIds.includes(vuln.advisory_ghsa_id)) {
-        advisoryIds.push(vuln.advisory_ghsa_id)
-      }
+      advisorySet.add(vuln.advisory_ghsa_id)
     }
   }
   
-  // Query GitHub API for patch info
+  // Query GitHub API for patch info in parallel
   const patchInfo: Record<string, Record<string, string>> = {}
   const apiClient = octokitClient()
   
-  for (const advId of advisoryIds) {
+  await Promise.all(Array.from(advisorySet).map(async advId => {
     try {
       const apiResult = await apiClient.request('GET /advisories/{ghsa_id}', {
         ghsa_id: advId
@@ -180,7 +178,7 @@ export async function addChangeVulnerabilitiesToSummary(
       core.debug(`API call failed for ${advId}: ${e}`)
       patchInfo[advId] = {}
     }
-  }
+  }))
 
   core.summary.addHeading('Vulnerabilities', 2)
 
