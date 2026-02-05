@@ -1760,10 +1760,11 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 const vulnList = apiResult.data.vulnerabilities || [];
                 for (const v of vulnList) {
                     if (v.package && v.package.ecosystem) {
-                        const eco = v.package.ecosystem;
+                        // Normalize ecosystem to lowercase for consistent lookups
+                        const normalizedEco = v.package.ecosystem.toLowerCase();
                         const patchVer = v.first_patched_version;
-                        if (patchVer && patchVer.identifier) {
-                            patchInfo[advId][eco] = patchVer.identifier;
+                        if (patchVer && typeof patchVer === 'object' && patchVer !== null && 'identifier' in patchVer && typeof patchVer.identifier === 'string') {
+                            patchInfo[advId][normalizedEco] = patchVer.identifier;
                         }
                     }
                 }
@@ -1781,24 +1782,12 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 for (const vuln of change.vulnerabilities) {
                     const sameAsPrevious = previous_package === change.name &&
                         previous_version === change.version;
-                    // Look up patch version
+                    // Look up patch version with normalized ecosystem
                     let patchVer = 'N/A';
                     const advData = patchInfo[vuln.advisory_ghsa_id];
                     if (advData) {
-                        // Try exact match
-                        if (advData[change.ecosystem]) {
-                            patchVer = advData[change.ecosystem];
-                        }
-                        else {
-                            // Try case-insensitive
-                            const lowerEco = change.ecosystem.toLowerCase();
-                            for (const [k, v] of Object.entries(advData)) {
-                                if (k.toLowerCase() === lowerEco) {
-                                    patchVer = v;
-                                    break;
-                                }
-                            }
-                        }
+                        const normalizedEco = change.ecosystem.toLowerCase();
+                        patchVer = advData[normalizedEco] || 'N/A';
                     }
                     if (!sameAsPrevious) {
                         rows.push([

@@ -167,10 +167,11 @@ export async function addChangeVulnerabilitiesToSummary(
       
       for (const v of vulnList) {
         if (v.package && v.package.ecosystem) {
-          const eco = v.package.ecosystem
-          const patchVer = v.first_patched_version as any
-          if (patchVer && patchVer.identifier) {
-            patchInfo[advId][eco] = patchVer.identifier
+          // Normalize ecosystem to lowercase for consistent lookups
+          const normalizedEco = v.package.ecosystem.toLowerCase()
+          const patchVer = v.first_patched_version
+          if (patchVer && typeof patchVer === 'object' && patchVer !== null && 'identifier' in patchVer && typeof (patchVer as {identifier: unknown}).identifier === 'string') {
+            patchInfo[advId][normalizedEco] = (patchVer as {identifier: string}).identifier
           }
         }
       }
@@ -193,23 +194,12 @@ export async function addChangeVulnerabilitiesToSummary(
           previous_package === change.name &&
           previous_version === change.version
 
-        // Look up patch version
+        // Look up patch version with normalized ecosystem
         let patchVer = 'N/A'
         const advData = patchInfo[vuln.advisory_ghsa_id]
         if (advData) {
-          // Try exact match
-          if (advData[change.ecosystem]) {
-            patchVer = advData[change.ecosystem]
-          } else {
-            // Try case-insensitive
-            const lowerEco = change.ecosystem.toLowerCase()
-            for (const [k, v] of Object.entries(advData)) {
-              if (k.toLowerCase() === lowerEco) {
-                patchVer = v
-                break
-              }
-            }
-          }
+          const normalizedEco = change.ecosystem.toLowerCase()
+          patchVer = advData[normalizedEco] || 'N/A'
         }
 
         if (!sameAsPrevious) {
