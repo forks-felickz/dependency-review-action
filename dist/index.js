@@ -779,7 +779,7 @@ function run() {
             let issueFound = false;
             if (config.vulnerability_check) {
                 core.setOutput('vulnerable-changes', JSON.stringify(vulnerableChanges));
-                summary.addChangeVulnerabilitiesToSummary(vulnerableChanges, minSeverity);
+                yield summary.addVulnerabilitiesWithRemediation(vulnerableChanges, minSeverity);
                 issueFound || (issueFound = yield printVulnerabilitiesBlock(vulnerableChanges, minSeverity, warnOnly));
             }
             if (config.license_check) {
@@ -1628,9 +1628,19 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.addSummaryToSummary = addSummaryToSummary;
 exports.addChangeVulnerabilitiesToSummary = addChangeVulnerabilitiesToSummary;
+exports.addVulnerabilitiesWithRemediation = addVulnerabilitiesWithRemediation;
 exports.addLicensesToSummary = addLicensesToSummary;
 exports.addScannedFiles = addScannedFiles;
 exports.addScorecardToSummary = addScorecardToSummary;
@@ -1770,6 +1780,87 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
     if (severity !== 'low') {
         core.summary.addQuote(`Only included vulnerabilities with severity <strong>${severity}</strong> or higher.`);
     }
+}
+function addVulnerabilitiesWithRemediation(vulnerableChanges, severity) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (vulnerableChanges.length === 0) {
+            return;
+        }
+        const rows = [];
+        const manifests = (0, utils_1.getManifestsSet)(vulnerableChanges);
+        const api = (0, utils_1.octokitClient)();
+        const fixCache = {};
+        const fetchPromises = {};
+        core.summary.addHeading('Vulnerabilities', 2);
+        for (const manifest of manifests) {
+            rows.length = 0;
+            for (const change of vulnerableChanges.filter(pkg => pkg.manifest === manifest)) {
+                let previous_package = '';
+                let previous_version = '';
+                for (const vuln of change.vulnerabilities) {
+                    const sameAsPrevious = previous_package === change.name &&
+                        previous_version === change.version;
+                    const ghsaKey = vuln.advisory_ghsa_id;
+                    if (!fixCache[ghsaKey] && !fetchPromises[ghsaKey]) {
+                        fetchPromises[ghsaKey] = api.request('GET /advisories/{ghsa_id}', { ghsa_id: ghsaKey })
+                            .then(r => {
+                            const vList = r.data.vulnerabilities || [];
+                            const patchVers = [];
+                            vList.forEach((v) => {
+                                if (v.patched_versions)
+                                    patchVers.push(v.patched_versions);
+                            });
+                            fixCache[ghsaKey] = patchVers.length ? patchVers.join(', ') : 'See advisory';
+                        })
+                            .catch(() => { fixCache[ghsaKey] = 'N/A'; });
+                    }
+                    if (!sameAsPrevious) {
+                        rows.push([
+                            (0, utils_1.renderUrl)(change.source_repository_url, change.name),
+                            change.version,
+                            (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
+                            vuln.severity,
+                            '__PLACEHOLDER_' + ghsaKey
+                        ]);
+                    }
+                    else {
+                        rows.push([
+                            { data: '', colspan: '2' },
+                            (0, utils_1.renderUrl)(vuln.advisory_url, vuln.advisory_summary),
+                            vuln.severity,
+                            '__PLACEHOLDER_' + ghsaKey
+                        ]);
+                    }
+                    previous_package = change.name;
+                    previous_version = change.version;
+                }
+            }
+            yield Promise.all(Object.values(fetchPromises));
+            for (const row of rows) {
+                if (Array.isArray(row)) {
+                    const lastIdx = row.length - 1;
+                    const placeholder = row[lastIdx];
+                    if (typeof placeholder === 'string' && placeholder.startsWith('__PLACEHOLDER_')) {
+                        const ghsaKey = placeholder.substring(14);
+                        row[lastIdx] = fixCache[ghsaKey] || 'N/A';
+                    }
+                }
+            }
+            core.summary.addHeading(`<em>${manifest}</em>`, 4).addTable([
+                [
+                    { data: 'Name', header: true },
+                    { data: 'Version', header: true },
+                    { data: 'Vulnerability', header: true },
+                    { data: 'Severity', header: true },
+                    { data: 'Patched Versions', header: true }
+                ],
+                ...rows
+            ]);
+        }
+        if (severity !== 'low') {
+            core.summary.addQuote(`Only included vulnerabilities with severity <strong>${severity}</strong> or higher.`);
+        }
+    });
 }
 function addLicensesToSummary(invalidLicenseChanges, config) {
     if (countLicenseIssues(invalidLicenseChanges) === 0) {

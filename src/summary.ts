@@ -2,7 +2,7 @@ import * as core from '@actions/core'
 import {SummaryTableRow} from '@actions/core/lib/summary'
 import {InvalidLicenseChanges, InvalidLicenseChangeTypes} from './licenses'
 import {Change, Changes, ConfigurationOptions, Scorecard} from './schemas'
-import {groupDependenciesByManifest, getManifestsSet, renderUrl} from './utils'
+import {groupDependenciesByManifest, getManifestsSet, renderUrl, octokitClient} from './utils'
 
 const icons = {
   check: '✅',
@@ -181,6 +181,103 @@ export function addChangeVulnerabilitiesToSummary(
         {data: 'Version', header: true},
         {data: 'Vulnerability', header: true},
         {data: 'Severity', header: true}
+      ],
+      ...rows
+    ])
+  }
+
+  if (severity !== 'low') {
+    core.summary.addQuote(
+      `Only included vulnerabilities with severity <strong>${severity}</strong> or higher.`
+    )
+  }
+}
+
+export async function addVulnerabilitiesWithRemediation(
+  vulnerableChanges: Changes,
+  severity: string
+): Promise<void> {
+  if (vulnerableChanges.length === 0) {
+    return
+  }
+
+  const rows: SummaryTableRow[] = []
+  const manifests = getManifestsSet(vulnerableChanges)
+  const api = octokitClient()
+  const fixCache: {[ghsa: string]: string} = {}
+  const fetchPromises: {[ghsa: string]: Promise<void>} = {}
+
+  core.summary.addHeading('Vulnerabilities', 2)
+
+  for (const manifest of manifests) {
+    rows.length = 0
+
+    for (const change of vulnerableChanges.filter(
+      pkg => pkg.manifest === manifest
+    )) {
+      let previous_package = ''
+      let previous_version = ''
+      
+      for (const vuln of change.vulnerabilities) {
+        const sameAsPrevious =
+          previous_package === change.name &&
+          previous_version === change.version
+        const ghsaKey = vuln.advisory_ghsa_id
+
+        if (!fixCache[ghsaKey] && !fetchPromises[ghsaKey]) {
+          fetchPromises[ghsaKey] = api.request('GET /advisories/{ghsa_id}', {ghsa_id: ghsaKey})
+            .then(r => {
+              const vList = r.data.vulnerabilities || []
+              const patchVers: string[] = []
+              vList.forEach((v: any) => {
+                if (v.patched_versions) patchVers.push(v.patched_versions)
+              })
+              fixCache[ghsaKey] = patchVers.length ? patchVers.join(', ') : 'See advisory'
+            })
+            .catch(() => { fixCache[ghsaKey] = 'N/A' })
+        }
+
+        if (!sameAsPrevious) {
+          rows.push([
+            renderUrl(change.source_repository_url, change.name),
+            change.version,
+            renderUrl(vuln.advisory_url, vuln.advisory_summary),
+            vuln.severity,
+            '__PLACEHOLDER_' + ghsaKey
+          ])
+        } else {
+          rows.push([
+            {data: '', colspan: '2'},
+            renderUrl(vuln.advisory_url, vuln.advisory_summary),
+            vuln.severity,
+            '__PLACEHOLDER_' + ghsaKey
+          ])
+        }
+        previous_package = change.name
+        previous_version = change.version
+      }
+    }
+
+    await Promise.all(Object.values(fetchPromises))
+
+    for (const row of rows) {
+      if (Array.isArray(row)) {
+        const lastIdx = row.length - 1
+        const placeholder = row[lastIdx]
+        if (typeof placeholder === 'string' && placeholder.startsWith('__PLACEHOLDER_')) {
+          const ghsaKey = placeholder.substring(14)
+          row[lastIdx] = fixCache[ghsaKey] || 'N/A'
+        }
+      }
+    }
+
+    core.summary.addHeading(`<em>${manifest}</em>`, 4).addTable([
+      [
+        {data: 'Name', header: true},
+        {data: 'Version', header: true},
+        {data: 'Vulnerability', header: true},
+        {data: 'Severity', header: true},
+        {data: 'Patched Versions', header: true}
       ],
       ...rows
     ])
