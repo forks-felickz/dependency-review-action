@@ -1647,20 +1647,65 @@ exports.addSnapshotWarnings = addSnapshotWarnings;
 exports.addDeniedToSummary = addDeniedToSummary;
 const core = __importStar(__nccwpck_require__(37484));
 const utils_1 = __nccwpck_require__(69277);
-const utils_2 = __nccwpck_require__(69277);
 const icons = {
     check: '✅',
     cross: '❌',
     warning: '⚠️'
 };
 const MAX_SCANNED_FILES_BYTES = 1048576;
+// Helper to check if a version falls within a vulnerable range
+// Supports basic semver comparisons like ">= 8.0.0, <= 8.0.20"
+function versionInRange(version, range) {
+    if (!version || !range)
+        return false;
+    // Parse version into comparable parts
+    const vParts = version.split('.').map(p => parseInt(p, 10));
+    // Handle range formats like ">= 8.0.0, <= 8.0.20"
+    const conditions = range.split(',').map(c => c.trim());
+    for (const condition of conditions) {
+        const match = condition.match(/([><=]+)\s*(\d+(?:\.\d+)*)/);
+        if (!match)
+            continue;
+        const [, operator, rangeVer] = match;
+        const rParts = rangeVer.split('.').map(p => parseInt(p, 10));
+        // Compare versions part by part
+        let cmp = 0;
+        for (let i = 0; i < Math.max(vParts.length, rParts.length); i++) {
+            const v = vParts[i] || 0;
+            const r = rParts[i] || 0;
+            if (v > r) {
+                cmp = 1;
+                break;
+            }
+            else if (v < r) {
+                cmp = -1;
+                break;
+            }
+        }
+        // Check if condition is satisfied
+        if (operator === '>=' && cmp < 0)
+            return false;
+        if (operator === '>' && cmp <= 0)
+            return false;
+        if (operator === '<=' && cmp > 0)
+            return false;
+        if (operator === '<' && cmp >= 0)
+            return false;
+        if (operator === '=' && cmp !== 0)
+            return false;
+    }
+    return true;
+}
 function extractPatchVersionId(patchData) {
-    if (!patchData || typeof patchData !== 'object')
-        return null;
-    if (!('identifier' in patchData))
-        return null;
-    const id = patchData.identifier;
-    return typeof id === 'string' ? id : null;
+    // Handle string format (current API response)
+    if (typeof patchData === 'string')
+        return patchData;
+    // Handle object format with identifier field (for backward compatibility)
+    if (patchData && typeof patchData === 'object' && 'identifier' in patchData) {
+        const id = patchData.identifier;
+        return typeof id === 'string' ? id : null;
+    }
+    return null;
 }
 // generates the DR report summary and caches it to the Action's core.summary.
 // returns the DR summary string, ready to be posted as a PR comment if the
@@ -1757,28 +1802,36 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
             }
         }
         // Query GitHub API for patch info in parallel
+        // Store all vulnerability entries (may be multiple per package with different ranges)
         const patchInfo = {};
-        const apiClient = (0, utils_2.octokitClient)();
+        const apiClient = (0, utils_1.octokitClient)();
         yield Promise.all(Array.from(advisorySet).map((advId) => __awaiter(this, void 0, void 0, function* () {
             try {
                 const apiResult = yield apiClient.request('GET /advisories/{ghsa_id}', {
                     ghsa_id: advId
                 });
-                patchInfo[advId] = {};
+                patchInfo[advId] = [];
                 const vulnList = apiResult.data.vulnerabilities || [];
                 for (const v of vulnList) {
                     if (v.package && v.package.ecosystem) {
                         const normalizedEco = v.package.ecosystem.toLowerCase();
+                        const pkgName = v.package.name || '';
+                        const vulnRange = v.vulnerable_version_range || '';
                         const patchVerId = extractPatchVersionId(v.first_patched_version);
                         if (patchVerId) {
-                            patchInfo[advId][normalizedEco] = patchVerId;
+                            patchInfo[advId].push({
+                                eco: normalizedEco,
+                                pkg: pkgName,
+                                range: vulnRange,
+                                patch: patchVerId
+                            });
                         }
                     }
                 }
             }
             catch (e) {
                 core.debug(`API call failed for ${advId}: ${e}`);
-                patchInfo[advId] = {};
+                patchInfo[advId] = [];
             }
         })));
         core.summary.addHeading('Vulnerabilities', 2);
@@ -1789,12 +1842,18 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 for (const vuln of change.vulnerabilities) {
                     const sameAsPrevious = previous_package === change.name &&
                         previous_version === change.version;
-                    // Look up patch version with normalized ecosystem
+                    // Look up patch version by matching package name, ecosystem, and version range
                     let patchVer = 'N/A';
                     const advData = patchInfo[vuln.advisory_ghsa_id];
-                    if (advData) {
+                    if (advData && advData.length > 0) {
                         const normalizedEco = change.ecosystem.toLowerCase();
-                        patchVer = advData[normalizedEco] || 'N/A';
+                        // Find matching entry by ecosystem, package name, and version range
+                        const matchingEntry = advData.find(entry => entry.eco === normalizedEco &&
+                            entry.pkg === change.name &&
+                            versionInRange(change.version, entry.range));
+                        if (matchingEntry) {
+                            patchVer = matchingEntry.patch;
+                        }
                     }
                     if (!sameAsPrevious) {
                         rows.push([
