@@ -1792,7 +1792,6 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
         if (vulnerableChanges.length === 0) {
             return;
         }
-        const rows = [];
         const manifests = (0, utils_1.getManifestsSet)(vulnerableChanges);
         // Build set of unique advisories to query
         const advisorySet = new Set();
@@ -1842,6 +1841,7 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
         })));
         core.summary.addHeading('Vulnerabilities', 2);
         for (const manifest of manifests) {
+            const rows = [];
             for (const change of vulnerableChanges.filter(pkg => pkg.manifest === manifest)) {
                 let previous_package = '';
                 let previous_version = '';

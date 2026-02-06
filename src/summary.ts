@@ -201,7 +201,6 @@ export async function addChangeVulnerabilitiesToSummary(
     return
   }
 
-  const rows: SummaryTableRow[] = []
   const manifests = getManifestsSet(vulnerableChanges)
 
   // Build set of unique advisories to query
@@ -271,6 +270,7 @@ export async function addChangeVulnerabilitiesToSummary(
   core.summary.addHeading('Vulnerabilities', 2)
 
   for (const manifest of manifests) {
+    const rows: SummaryTableRow[] = []
     for (const change of vulnerableChanges.filter(
       pkg => pkg.manifest === manifest
     )) {
