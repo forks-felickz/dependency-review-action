@@ -1807,11 +1807,13 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
         const apiClient = (0, utils_1.octokitClient)();
         yield Promise.all(Array.from(advisorySet).map((advId) => __awaiter(this, void 0, void 0, function* () {
             try {
+                core.debug(`Fetching advisory data for ${advId}`);
                 const apiResult = yield apiClient.request('GET /advisories/{ghsa_id}', {
                     ghsa_id: advId
                 });
                 patchInfo[advId] = [];
                 const vulnList = apiResult.data.vulnerabilities || [];
+                core.debug(`Found ${vulnList.length} vulnerability entries for ${advId}`);
                 for (const v of vulnList) {
                     if (v.package && v.package.ecosystem) {
                         const normalizedEco = v.package.ecosystem.toLowerCase();
@@ -1825,6 +1827,10 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                                 range: vulnRange,
                                 patch: patchVerId
                             });
+                            core.debug(`Added patch info for ${pkgName} (${normalizedEco}): ${patchVerId} for range ${vulnRange}`);
+                        }
+                        else {
+                            core.debug(`No patch version found for ${pkgName} (${normalizedEco}) in ${advId}`);
                         }
                     }
                 }
@@ -1847,13 +1853,21 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                     const advData = patchInfo[vuln.advisory_ghsa_id];
                     if (advData && advData.length > 0) {
                         const normalizedEco = change.ecosystem.toLowerCase();
+                        core.debug(`Looking up patch for ${change.name}@${change.version} (${normalizedEco}) in ${vuln.advisory_ghsa_id}`);
                         // Find matching entry by ecosystem, package name, and version range
                         const matchingEntry = advData.find(entry => entry.eco === normalizedEco &&
                             entry.pkg === change.name &&
                             versionInRange(change.version, entry.range));
                         if (matchingEntry) {
                             patchVer = matchingEntry.patch;
+                            core.debug(`Found patch version ${patchVer} for ${change.name}@${change.version}`);
                         }
+                        else {
+                            core.debug(`No matching patch found for ${change.name}@${change.version}. Available entries: ${JSON.stringify(advData)}`);
+                        }
+                    }
+                    else {
+                        core.debug(`No advisory data available for ${vuln.advisory_ghsa_id}`);
                     }
                     if (!sameAsPrevious) {
                         rows.push([
