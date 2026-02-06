@@ -8,6 +8,7 @@ import {
   renderUrl,
   octokitClient
 } from './utils'
+import * as semver from 'semver'
 
 const icons = {
   check: '✅',
@@ -18,46 +19,20 @@ const icons = {
 const MAX_SCANNED_FILES_BYTES = 1048576
 
 // Helper to check if a version falls within a vulnerable range
-// Supports basic semver comparisons like ">= 8.0.0, <= 8.0.20"
+// Uses semver library for proper prerelease handling and range parsing
 function versionInRange(version: string, range: string): boolean {
   if (!version || !range) return false
 
-  // Parse version into comparable parts
-  const vParts = version.split('.').map(p => parseInt(p, 10))
-
-  // Handle range formats like ">= 8.0.0, <= 8.0.20"
-  const conditions = range.split(',').map(c => c.trim())
-
-  for (const condition of conditions) {
-    const match = condition.match(/([><=]+)\s*(\d+(?:\.\d+)*)/)
-    if (!match) continue
-
-    const [, operator, rangeVer] = match
-    const rParts = rangeVer.split('.').map(p => parseInt(p, 10))
-
-    // Compare versions part by part
-    let cmp = 0
-    for (let i = 0; i < Math.max(vParts.length, rParts.length); i++) {
-      const v = vParts[i] || 0
-      const r = rParts[i] || 0
-      if (v > r) {
-        cmp = 1
-        break
-      } else if (v < r) {
-        cmp = -1
-        break
-      }
-    }
-
-    // Check if condition is satisfied
-    if (operator === '>=' && cmp < 0) return false
-    if (operator === '>' && cmp <= 0) return false
-    if (operator === '<=' && cmp > 0) return false
-    if (operator === '<' && cmp >= 0) return false
-    if (operator === '=' && cmp !== 0) return false
+  try {
+    // Parse the range - semver library handles complex ranges and prereleases
+    return semver.satisfies(version, range, {includePrerelease: true})
+  } catch (error) {
+    // Fail closed: if range cannot be parsed, assume version is NOT safe
+    core.debug(
+      `Failed to parse version range "${range}" for version "${version}": ${error instanceof Error ? error.message : String(error)}`
+    )
+    return false
   }
-
-  return true
 }
 
 function extractPatchVersionId(patchData: unknown): string | null {
@@ -201,7 +176,6 @@ export async function addChangeVulnerabilitiesToSummary(
     return
   }
 
-  const rows: SummaryTableRow[] = []
   const manifests = getManifestsSet(vulnerableChanges)
 
   // Build set of unique advisories to query
@@ -258,7 +232,8 @@ export async function addChangeVulnerabilitiesToSummary(
           }
         }
       } catch (e) {
-        core.debug(`API call failed for ${advId}: ${e}`)
+        const errorMessage = e instanceof Error ? e.message : String(e)
+        core.debug(`API call failed for ${advId}: ${errorMessage}`)
         patchInfo[advId] = []
       }
     })
@@ -267,6 +242,9 @@ export async function addChangeVulnerabilitiesToSummary(
   core.summary.addHeading('Vulnerabilities', 2)
 
   for (const manifest of manifests) {
+    // Create fresh rows array for each manifest to avoid accumulation
+    const rows: SummaryTableRow[] = []
+    
     for (const change of vulnerableChanges.filter(
       pkg => pkg.manifest === manifest
     )) {
@@ -282,14 +260,15 @@ export async function addChangeVulnerabilitiesToSummary(
         const advData = patchInfo[vuln.advisory_ghsa_id]
         if (advData && advData.length > 0) {
           const normalizedEco = change.ecosystem.toLowerCase()
+          const pkgNameLower = change.name.toLowerCase()
           core.debug(
             `Looking up patch for ${change.name}@${change.version} (${normalizedEco}) in ${vuln.advisory_ghsa_id}`
           )
-          // Find matching entry by ecosystem, package name, and version range
+          // Find matching entry by ecosystem, package name (case-insensitive), and version range
           const matchingEntry = advData.find(
             entry =>
               entry.eco === normalizedEco &&
-              entry.pkg === change.name &&
+              entry.pkg.toLowerCase() === pkgNameLower &&
               versionInRange(change.version, entry.range)
           )
           if (matchingEntry) {
