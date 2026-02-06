@@ -1647,6 +1647,7 @@ exports.addSnapshotWarnings = addSnapshotWarnings;
 exports.addDeniedToSummary = addDeniedToSummary;
 const core = __importStar(__nccwpck_require__(37484));
 const utils_1 = __nccwpck_require__(69277);
+const semver = __importStar(__nccwpck_require__(62088));
 const icons = {
     check: '✅',
     cross: '❌',
@@ -1654,47 +1655,23 @@ const icons = {
 };
 const MAX_SCANNED_FILES_BYTES = 1048576;
 // Helper to check if a version falls within a vulnerable range
-// Supports basic semver comparisons like ">= 8.0.0, <= 8.0.20"
+// Uses semver library for proper prerelease handling and range parsing
 function versionInRange(version, range) {
     if (!version || !range)
         return false;
-    // Parse version into comparable parts
-    const vParts = version.split('.').map(p => parseInt(p, 10));
-    // Handle range formats like ">= 8.0.0, <= 8.0.20"
-    const conditions = range.split(',').map(c => c.trim());
-    for (const condition of conditions) {
-        const match = condition.match(/([><=]+)\s*(\d+(?:\.\d+)*)/);
-        if (!match)
-            continue;
-        const [, operator, rangeVer] = match;
-        const rParts = rangeVer.split('.').map(p => parseInt(p, 10));
-        // Compare versions part by part
-        let cmp = 0;
-        for (let i = 0; i < Math.max(vParts.length, rParts.length); i++) {
-            const v = vParts[i] || 0;
-            const r = rParts[i] || 0;
-            if (v > r) {
-                cmp = 1;
-                break;
-            }
-            else if (v < r) {
-                cmp = -1;
-                break;
-            }
-        }
-        // Check if condition is satisfied
-        if (operator === '>=' && cmp < 0)
-            return false;
-        if (operator === '>' && cmp <= 0)
-            return false;
-        if (operator === '<=' && cmp > 0)
-            return false;
-        if (operator === '<' && cmp >= 0)
-            return false;
-        if (operator === '=' && cmp !== 0)
-            return false;
+    try {
+        // Convert GitHub API range format to semver format
+        // GitHub uses: ">= 8.0.0, <= 8.0.20" 
+        // Semver expects: ">=8.0.0 <=8.0.20"
+        const semverRange = range.replace(/,\s*/g, ' ');
+        // Parse the range - semver library handles complex ranges and prereleases
+        return semver.satisfies(version, semverRange, { includePrerelease: true });
     }
-    return true;
+    catch (error) {
+        // Fail closed: if range cannot be parsed, assume version is NOT safe
+        core.debug(`Failed to parse version range "${range}" for version "${version}": ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+    }
 }
 function extractPatchVersionId(patchData) {
     // Handle string format (current API response)
@@ -1792,7 +1769,6 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
         if (vulnerableChanges.length === 0) {
             return;
         }
-        const rows = [];
         const manifests = (0, utils_1.getManifestsSet)(vulnerableChanges);
         // Build set of unique advisories to query
         const advisorySet = new Set();
@@ -1836,12 +1812,15 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 }
             }
             catch (e) {
-                core.debug(`API call failed for ${advId}: ${e}`);
+                const errorMessage = e instanceof Error ? e.message : String(e);
+                core.debug(`API call failed for ${advId}: ${errorMessage}`);
                 patchInfo[advId] = [];
             }
         })));
         core.summary.addHeading('Vulnerabilities', 2);
         for (const manifest of manifests) {
+            // Create fresh rows array for each manifest to avoid accumulation
+            const rows = [];
             for (const change of vulnerableChanges.filter(pkg => pkg.manifest === manifest)) {
                 let previous_package = '';
                 let previous_version = '';
@@ -1853,10 +1832,11 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                     const advData = patchInfo[vuln.advisory_ghsa_id];
                     if (advData && advData.length > 0) {
                         const normalizedEco = change.ecosystem.toLowerCase();
+                        const pkgNameLower = change.name.toLowerCase();
                         core.debug(`Looking up patch for ${change.name}@${change.version} (${normalizedEco}) in ${vuln.advisory_ghsa_id}`);
-                        // Find matching entry by ecosystem, package name, and version range
+                        // Find matching entry by ecosystem, package name (case-insensitive), and version range
                         const matchingEntry = advData.find(entry => entry.eco === normalizedEco &&
-                            entry.pkg === change.name &&
+                            entry.pkg.toLowerCase() === pkgNameLower &&
                             versionInRange(change.version, entry.range));
                         if (matchingEntry) {
                             patchVer = matchingEntry.patch;
@@ -62883,6 +62863,7 @@ const isSatisfiable = (comparators, options) => {
 // already replaced the hyphen ranges
 // turn into a set of JUST comparators.
 const parseComparator = (comp, options) => {
+  comp = comp.replace(re[t.BUILD], '')
   debug('comp', comp, options)
   comp = replaceCarets(comp, options)
   debug('caret', comp)
@@ -63303,11 +63284,25 @@ class SemVer {
       other = new SemVer(other, this.options)
     }
 
-    return (
-      compareIdentifiers(this.major, other.major) ||
-      compareIdentifiers(this.minor, other.minor) ||
-      compareIdentifiers(this.patch, other.patch)
-    )
+    if (this.major < other.major) {
+      return -1
+    }
+    if (this.major > other.major) {
+      return 1
+    }
+    if (this.minor < other.minor) {
+      return -1
+    }
+    if (this.minor > other.minor) {
+      return 1
+    }
+    if (this.patch < other.patch) {
+      return -1
+    }
+    if (this.patch > other.patch) {
+      return 1
+    }
+    return 0
   }
 
   comparePre (other) {
@@ -63765,7 +63760,7 @@ const diff = (version1, version2) => {
     return prefix + 'patch'
   }
 
-  // high and low are preleases
+  // high and low are prereleases
   return 'prerelease'
 }
 
@@ -64208,6 +64203,10 @@ module.exports = debug
 
 const numeric = /^[0-9]+$/
 const compareIdentifiers = (a, b) => {
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a === b ? 0 : a < b ? -1 : 1
+  }
+
   const anum = numeric.test(a)
   const bnum = numeric.test(b)
 
@@ -64392,8 +64391,8 @@ createToken('MAINVERSIONLOOSE', `(${src[t.NUMERICIDENTIFIERLOOSE]})\\.` +
 
 // ## Pre-release Version Identifier
 // A numeric identifier, or a non-numeric identifier.
-// Non-numberic identifiers include numberic identifiers but can be longer.
-// Therefore non-numberic identifiers must go first.
+// Non-numeric identifiers include numeric identifiers but can be longer.
+// Therefore non-numeric identifiers must go first.
 
 createToken('PRERELEASEIDENTIFIER', `(?:${src[t.NONNUMERICIDENTIFIER]
 }|${src[t.NUMERICIDENTIFIER]})`)
@@ -64915,7 +64914,7 @@ const compare = __nccwpck_require__(78469)
 // - If LT
 //   - If LT.semver is greater than any < or <= comp in C, return false
 //   - If LT is <=, and LT.semver does not satisfy every C, return false
-//   - If GT.semver has a prerelease, and not in prerelease mode
+//   - If LT.semver has a prerelease, and not in prerelease mode
 //     - If no C has a prerelease and the LT.semver tuple, return false
 // - Else return true
 
