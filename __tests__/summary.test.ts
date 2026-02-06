@@ -569,7 +569,7 @@ test('addChangeVulnerabilitiesToSummary() - handles multiple version ranges for 
             name: 'Microsoft.NetCore.App.Runtime.linux-arm'
           },
           vulnerable_version_range: '>= 8.0.0, <= 8.0.20',
-          first_patched_version: {identifier: '8.0.21'}
+          first_patched_version: '8.0.21'
         },
         {
           package: {
@@ -577,7 +577,7 @@ test('addChangeVulnerabilitiesToSummary() - handles multiple version ranges for 
             name: 'Microsoft.NetCore.App.Runtime.linux-arm'
           },
           vulnerable_version_range: '>= 9.0.0, <= 9.0.9',
-          first_patched_version: {identifier: '9.0.10'}
+          first_patched_version: '9.0.10'
         }
       ]
     }
@@ -593,5 +593,49 @@ test('addChangeVulnerabilitiesToSummary() - handles multiple version ranges for 
   expect(text).toContain('9.0.10')
   expect(mockOctokitRequest).toHaveBeenCalledWith('GET /advisories/{ghsa_id}', {
     ghsa_id: 'GHSA-test-multi'
+  })
+})
+
+test('addChangeVulnerabilitiesToSummary() - handles RestSharp GHSA-4rr6-2v9v-wcpc case', async () => {
+  const pkg = createTestChange({
+    ecosystem: 'nuget',
+    name: 'RestSharp',
+    version: '111.4.1',
+    vulnerabilities: [
+      createTestVulnerability({
+        advisory_ghsa_id: 'GHSA-4rr6-2v9v-wcpc',
+        advisory_summary:
+          "CRLF Injection in RestSharp's `RestRequest.AddHeader` method",
+        severity: 'moderate'
+      })
+    ]
+  })
+
+  // Mock API response matching actual GitHub Advisory Database response
+  mockOctokitRequest.mockResolvedValueOnce({
+    data: {
+      vulnerabilities: [
+        {
+          package: {
+            ecosystem: 'nuget',
+            name: 'RestSharp'
+          },
+          vulnerable_version_range: '>= 107.0.0-preview.1, < 112.0.0',
+          first_patched_version: '112.0.0'
+        }
+      ]
+    }
+  })
+
+  const changes = [pkg]
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+
+  const text = core.summary.stringify()
+
+  // Should show the correct patched version
+  expect(text).toContain('112.0.0')
+  expect(text).not.toContain('N/A')
+  expect(mockOctokitRequest).toHaveBeenCalledWith('GET /advisories/{ghsa_id}', {
+    ghsa_id: 'GHSA-4rr6-2v9v-wcpc'
   })
 })

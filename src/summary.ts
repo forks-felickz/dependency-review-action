@@ -61,10 +61,16 @@ function versionInRange(version: string, range: string): boolean {
 }
 
 function extractPatchVersionId(patchData: unknown): string | null {
-  if (!patchData || typeof patchData !== 'object') return null
-  if (!('identifier' in patchData)) return null
-  const id = (patchData as {identifier: unknown}).identifier
-  return typeof id === 'string' ? id : null
+  // Handle string format (current API response)
+  if (typeof patchData === 'string') return patchData
+
+  // Handle object format with identifier field (for backward compatibility)
+  if (patchData && typeof patchData === 'object' && 'identifier' in patchData) {
+    const id = (patchData as {identifier: unknown}).identifier
+    return typeof id === 'string' ? id : null
+  }
+
+  return null
 }
 
 // generates the DR report summary and caches it to the Action's core.summary.
