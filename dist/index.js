@@ -1836,7 +1836,7 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 }
             }
             catch (e) {
-                core.debug(`API call failed for ${advId}: ${e}`);
+                core.debug(`API call failed for ${advId}: ${e instanceof Error ? e.message : String(e)}`);
                 patchInfo[advId] = [];
             }
         })));
