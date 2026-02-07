@@ -1691,7 +1691,12 @@ function versionInRange(version, range, options = {}) {
     const validRange = semver.validRange(semverRange);
     if (!validVersion || !validRange) {
         if (failClosed) {
-            core.debug(`Invalid ${!validVersion ? 'version' : 'version range'}: version="${version}", range="${range}". Treating as vulnerable (fail closed).`);
+            const issues = [];
+            if (!validVersion)
+                issues.push('version');
+            if (!validRange)
+                issues.push('version range');
+            core.debug(`Invalid ${issues.join(' and ')}: version="${version}", range="${range}". Treating as vulnerable (fail closed).`);
         }
         return failClosed;
     }

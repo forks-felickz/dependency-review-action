@@ -72,8 +72,11 @@ function versionInRange(
 
   if (!validVersion || !validRange) {
     if (failClosed) {
+      const issues = []
+      if (!validVersion) issues.push('version')
+      if (!validRange) issues.push('version range')
       core.debug(
-        `Invalid ${!validVersion ? 'version' : 'version range'}: version="${version}", range="${range}". Treating as vulnerable (fail closed).`
+        `Invalid ${issues.join(' and ')}: version="${version}", range="${range}". Treating as vulnerable (fail closed).`
       )
     }
     return failClosed
