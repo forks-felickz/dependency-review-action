@@ -1668,35 +1668,34 @@ function versionInRange(version, range, options = {}) {
     const trimmedRange = preTrimmed ? range : (range === null || range === void 0 ? void 0 : range.trim()) || '';
     if (!trimmedVersion) {
         if (failClosed) {
-            // Fail closed: treat missing/empty version as unparseable and assume vulnerable
-            core.debug(`Empty or missing version for range "${range}". Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`);
+            core.debug(`Empty or missing version for range "${range}". Treating as vulnerable (fail closed).`);
         }
         return failClosed;
     }
     if (!trimmedRange) {
         if (failClosed) {
-            // Fail closed: treat missing/empty range as unparseable and assume vulnerable
-            core.debug(`Empty or missing version range for version "${version}". Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`);
+            core.debug(`Empty or missing version range for version "${version}". Treating as vulnerable (fail closed).`);
         }
         return failClosed;
     }
-    try {
-        // Convert GitHub API range format to semver format
-        // GitHub uses: ">= 8.0.0, <= 8.0.20"
-        // Semver expects: ">=8.0.0 <=8.0.20"
-        const semverRange = trimmedRange.replace(/,\s*/g, ' ');
-        // Parse the range - semver library handles complex ranges and prereleases
-        return semver.satisfies(trimmedVersion, semverRange, {
-            includePrerelease: true
-        });
-    }
-    catch (error) {
+    // Convert GitHub API range format to semver format
+    // GitHub uses: ">= 8.0.0, <= 8.0.20"
+    // Semver expects: ">=8.0.0 <=8.0.20"
+    const semverRange = trimmedRange.replace(/,\s*/g, ' ');
+    // Validate version and range explicitly to enforce fail-closed semantics
+    // semver.satisfies() typically returns false for invalid inputs without throwing
+    const validVersion = semver.valid(trimmedVersion);
+    const validRange = semver.validRange(semverRange);
+    if (!validVersion || !validRange) {
         if (failClosed) {
-            // Fail closed: if range cannot be parsed, assume version IS vulnerable
-            core.debug(`Failed to parse version range "${range}" for version "${version}": ${error instanceof Error ? error.message : String(error)}. Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`);
+            core.debug(`Invalid ${!validVersion ? 'version' : 'version range'}: version="${version}", range="${range}". Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`);
         }
         return failClosed;
     }
+    // Both version and range are valid; perform the satisfies check
+    return semver.satisfies(validVersion, validRange, {
+        includePrerelease: true
+    });
 }
 function extractPatchVersionId(patchData) {
     // Handle string format (current API response)
@@ -1870,13 +1869,14 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                             if (vulnEntry.pkg.toLowerCase() !== packageLowercase)
                                 continue;
                             // Normalize range and build cache key
-                            const normalizedRange = vulnEntry.range.trim();
+                            // Apply same normalization as versionInRange for semantic equality
+                            const normalizedRange = vulnEntry.range.trim().replace(/,\s*/g, ' ');
                             const cacheKey = `${normalizedChangeVersion}:${normalizedRange}`;
                             let isInRange = rangeCheckCache.get(cacheKey);
                             if (isInRange === undefined) {
                                 // Use fail-open (failClosed: false) for patch selection to avoid
                                 // incorrectly matching on invalid ranges, and preTrimmed optimization
-                                isInRange = versionInRange(normalizedChangeVersion, normalizedRange, { preTrimmed: true, failClosed: false });
+                                isInRange = versionInRange(normalizedChangeVersion, vulnEntry.range.trim(), { preTrimmed: true, failClosed: false });
                                 rangeCheckCache.set(cacheKey, isInRange);
                             }
                             if (isInRange) {
