@@ -21,16 +21,21 @@ const MAX_SCANNED_FILES_BYTES = 1048576
 // Helper to check if a version falls within a vulnerable range
 // Uses semver library for proper prerelease handling and range parsing
 // @param version - The version to check (can be pre-trimmed)
-// @param range - The version range to check against (can be pre-trimmed)
+// @param range - The version range to check against (can be pre-trimmed and/or pre-normalized)
 // @param options - Configuration options
 // @param options.preTrimmed - If true, assumes inputs are already trimmed (optimization)
+// @param options.preNormalized - If true, assumes range is already normalized (comma-to-space conversion done)
 // @param options.failClosed - If true, returns true (vulnerable) on errors; if false, returns false (no match)
 function versionInRange(
   version: string,
   range: string,
-  options: {preTrimmed?: boolean; failClosed?: boolean} = {}
+  options: {
+    preTrimmed?: boolean
+    preNormalized?: boolean
+    failClosed?: boolean
+  } = {}
 ): boolean {
-  const {preTrimmed = false, failClosed = true} = options
+  const {preTrimmed = false, preNormalized = false, failClosed = true} = options
 
   // Trim inputs if not pre-trimmed
   const trimmedVersion = preTrimmed ? version : version?.trim() || ''
@@ -53,10 +58,12 @@ function versionInRange(
     return failClosed
   }
 
-  // Convert GitHub API range format to semver format
+  // Convert GitHub API range format to semver format if not already normalized
   // GitHub uses: ">= 8.0.0, <= 8.0.20"
   // Semver expects: ">=8.0.0 <=8.0.20"
-  const semverRange = trimmedRange.replace(/,\s*/g, ' ')
+  const semverRange = preNormalized
+    ? trimmedRange
+    : trimmedRange.replace(/,\s*/g, ' ')
 
   // Validate version and range explicitly to enforce fail-closed semantics
   // semver.satisfies() typically returns false for invalid inputs without throwing
@@ -316,7 +323,7 @@ export async function addChangeVulnerabilitiesToSummary(
             | {eco: string; pkg: string; range: string; patch: string}
             | undefined = undefined
           for (const vulnEntry of advisoryEntries) {
-            if (vulnEntry.eco !== ecoLowercase) continue
+            if (vulnEntry.eco.toLowerCase() !== ecoLowercase) continue
             if (vulnEntry.pkg.toLowerCase() !== packageLowercase) continue
 
             // Normalize range once and reuse for both cache key and function call
@@ -327,11 +334,12 @@ export async function addChangeVulnerabilitiesToSummary(
             let isInRange = rangeCheckCache.get(cacheKey)
             if (isInRange === undefined) {
               // Use fail-open (failClosed: false) for patch selection to avoid
-              // incorrectly matching on invalid ranges, and preTrimmed optimization
+              // incorrectly matching on invalid ranges
+              // Use preTrimmed and preNormalized optimizations since we've done both
               isInRange = versionInRange(
                 normalizedChangeVersion,
-                trimmedRangeOnce,
-                {preTrimmed: true, failClosed: false}
+                normalizedRange,
+                {preTrimmed: true, preNormalized: true, failClosed: false}
               )
               rangeCheckCache.set(cacheKey, isInRange)
             }
