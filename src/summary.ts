@@ -20,24 +20,39 @@ const MAX_SCANNED_FILES_BYTES = 1048576
 
 // Helper to check if a version falls within a vulnerable range
 // Uses semver library for proper prerelease handling and range parsing
-function versionInRange(version: string, range: string): boolean {
-  // Trim inputs first to handle whitespace-only strings correctly
-  const trimmedVersion = version?.trim() || ''
-  const trimmedRange = range?.trim() || ''
+// @param version - The version to check (can be pre-trimmed)
+// @param range - The version range to check against (can be pre-trimmed)
+// @param options - Configuration options
+// @param options.preTrimmed - If true, assumes inputs are already trimmed (optimization)
+// @param options.failClosed - If true, returns true (vulnerable) on errors; if false, returns false (no match)
+function versionInRange(
+  version: string,
+  range: string,
+  options: {preTrimmed?: boolean; failClosed?: boolean} = {}
+): boolean {
+  const {preTrimmed = false, failClosed = true} = options
+
+  // Trim inputs if not pre-trimmed
+  const trimmedVersion = preTrimmed ? version : version?.trim() || ''
+  const trimmedRange = preTrimmed ? range : range?.trim() || ''
 
   if (!trimmedVersion) {
-    // Fail closed: treat missing/empty version as unparseable and assume vulnerable
-    core.debug(
-      `Empty or missing version for range "${range}". Treating as vulnerable (fail closed).`
-    )
-    return true
+    if (failClosed) {
+      // Fail closed: treat missing/empty version as unparseable and assume vulnerable
+      core.debug(
+        `Empty or missing version for range "${range}". Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`
+      )
+    }
+    return failClosed
   }
   if (!trimmedRange) {
-    // Fail closed: treat missing/empty range as unparseable and assume vulnerable
-    core.debug(
-      `Empty or missing version range for version "${version}". Treating as vulnerable (fail closed).`
-    )
-    return true
+    if (failClosed) {
+      // Fail closed: treat missing/empty range as unparseable and assume vulnerable
+      core.debug(
+        `Empty or missing version range for version "${version}". Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`
+      )
+    }
+    return failClosed
   }
 
   try {
@@ -51,11 +66,13 @@ function versionInRange(version: string, range: string): boolean {
       includePrerelease: true
     })
   } catch (error) {
-    // Fail closed: if range cannot be parsed, assume version IS vulnerable
-    core.debug(
-      `Failed to parse version range "${range}" for version "${version}": ${error instanceof Error ? error.message : String(error)}`
-    )
-    return true
+    if (failClosed) {
+      // Fail closed: if range cannot be parsed, assume version IS vulnerable
+      core.debug(
+        `Failed to parse version range "${range}" for version "${version}": ${error instanceof Error ? error.message : String(error)}. Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`
+      )
+    }
+    return failClosed
   }
 }
 
@@ -305,9 +322,12 @@ export async function addChangeVulnerabilitiesToSummary(
             const cacheKey = `${normalizedChangeVersion}:${normalizedRange}`
             let isInRange = rangeCheckCache.get(cacheKey)
             if (isInRange === undefined) {
+              // Use fail-open (failClosed: false) for patch selection to avoid
+              // incorrectly matching on invalid ranges, and preTrimmed optimization
               isInRange = versionInRange(
                 normalizedChangeVersion,
-                normalizedRange
+                normalizedRange,
+                {preTrimmed: true, failClosed: false}
               )
               rangeCheckCache.set(cacheKey, isInRange)
             }
