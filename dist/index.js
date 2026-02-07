@@ -1657,8 +1657,11 @@ const MAX_SCANNED_FILES_BYTES = 1048576;
 // Helper to check if a version falls within a vulnerable range
 // Uses semver library for proper prerelease handling and range parsing
 function versionInRange(version, range) {
-    if (!version)
-        return false;
+    if (!version) {
+        // Fail closed: treat missing/empty version as unparseable and assume vulnerable
+        core.debug(`Empty or missing version for range "${range}". Treating as vulnerable (fail closed).`);
+        return true;
+    }
     if (!range) {
         // Fail closed: treat missing/empty range as unparseable and assume vulnerable
         core.debug(`Empty or missing version range for version "${version}". Treating as vulnerable (fail closed).`);
@@ -1846,16 +1849,21 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                         // Build cache key to avoid re-parsing same version+range combinations
                         const rangeCheckCache = new Map();
                         // Find matching entry by ecosystem, package name (case-insensitive), and version range
-                        let foundEntry = null;
+                        let foundEntry = undefined;
                         for (const vulnEntry of advisoryEntries) {
                             if (vulnEntry.eco !== ecoLowercase)
                                 continue;
                             if (vulnEntry.pkg.toLowerCase() !== packageLowercase)
                                 continue;
-                            const cacheKey = `${change.version}|||${vulnEntry.range}`;
+                            // Normalize inputs so cache key matches versionInRange semantics
+                            const rawVersion = change.version;
+                            const rawRange = vulnEntry.range;
+                            const normalizedVersion = rawVersion.trim();
+                            const normalizedRange = rawRange.trim();
+                            const cacheKey = JSON.stringify([normalizedVersion, normalizedRange]);
                             let isInRange = rangeCheckCache.get(cacheKey);
                             if (isInRange === undefined) {
-                                isInRange = versionInRange(change.version, vulnEntry.range);
+                                isInRange = versionInRange(normalizedVersion, normalizedRange);
                                 rangeCheckCache.set(cacheKey, isInRange);
                             }
                             if (isInRange) {
