@@ -1696,8 +1696,11 @@ function versionInRange(version, range, options = {}) {
         return failClosed;
     }
     // Both version and range are valid; perform the satisfies check
+    // Only include prereleases when the version being checked is itself a prerelease
+    // to avoid changing range semantics globally
+    const isPrerelease = semver.prerelease(validVersion) !== null;
     return semver.satisfies(validVersion, validRange, {
-        includePrerelease: true
+        includePrerelease: isPrerelease
     });
 }
 function extractPatchVersionId(patchData) {
