@@ -66,7 +66,7 @@ function versionInRange(
   if (!validVersion || !validRange) {
     if (failClosed) {
       core.debug(
-        `Invalid ${!validVersion ? 'version' : 'version range'}: version="${version}", range="${range}". Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`
+        `Invalid ${!validVersion ? 'version' : 'version range'}: version="${version}", range="${range}". Treating as vulnerable (fail closed).`
       )
     }
     return failClosed
@@ -319,9 +319,10 @@ export async function addChangeVulnerabilitiesToSummary(
             if (vulnEntry.eco !== ecoLowercase) continue
             if (vulnEntry.pkg.toLowerCase() !== packageLowercase) continue
 
-            // Normalize range and build cache key
+            // Normalize range once and reuse for both cache key and function call
+            const trimmedRangeOnce = vulnEntry.range.trim()
             // Apply same normalization as versionInRange for semantic equality
-            const normalizedRange = vulnEntry.range.trim().replace(/,\s*/g, ' ')
+            const normalizedRange = trimmedRangeOnce.replace(/,\s*/g, ' ')
             const cacheKey = `${normalizedChangeVersion}:${normalizedRange}`
             let isInRange = rangeCheckCache.get(cacheKey)
             if (isInRange === undefined) {
@@ -329,7 +330,7 @@ export async function addChangeVulnerabilitiesToSummary(
               // incorrectly matching on invalid ranges, and preTrimmed optimization
               isInRange = versionInRange(
                 normalizedChangeVersion,
-                vulnEntry.range.trim(),
+                trimmedRangeOnce,
                 {preTrimmed: true, failClosed: false}
               )
               rangeCheckCache.set(cacheKey, isInRange)

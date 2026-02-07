@@ -1688,7 +1688,7 @@ function versionInRange(version, range, options = {}) {
     const validRange = semver.validRange(semverRange);
     if (!validVersion || !validRange) {
         if (failClosed) {
-            core.debug(`Invalid ${!validVersion ? 'version' : 'version range'}: version="${version}", range="${range}". Treating as ${failClosed ? 'vulnerable (fail closed)' : 'non-matching (fail open)'}.`);
+            core.debug(`Invalid ${!validVersion ? 'version' : 'version range'}: version="${version}", range="${range}". Treating as vulnerable (fail closed).`);
         }
         return failClosed;
     }
@@ -1868,15 +1868,16 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                                 continue;
                             if (vulnEntry.pkg.toLowerCase() !== packageLowercase)
                                 continue;
-                            // Normalize range and build cache key
+                            // Normalize range once and reuse for both cache key and function call
+                            const trimmedRangeOnce = vulnEntry.range.trim();
                             // Apply same normalization as versionInRange for semantic equality
-                            const normalizedRange = vulnEntry.range.trim().replace(/,\s*/g, ' ');
+                            const normalizedRange = trimmedRangeOnce.replace(/,\s*/g, ' ');
                             const cacheKey = `${normalizedChangeVersion}:${normalizedRange}`;
                             let isInRange = rangeCheckCache.get(cacheKey);
                             if (isInRange === undefined) {
                                 // Use fail-open (failClosed: false) for patch selection to avoid
                                 // incorrectly matching on invalid ranges, and preTrimmed optimization
-                                isInRange = versionInRange(normalizedChangeVersion, vulnEntry.range.trim(), { preTrimmed: true, failClosed: false });
+                                isInRange = versionInRange(normalizedChangeVersion, trimmedRangeOnce, { preTrimmed: true, failClosed: false });
                                 rangeCheckCache.set(cacheKey, isInRange);
                             }
                             if (isInRange) {
