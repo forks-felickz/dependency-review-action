@@ -32,11 +32,11 @@ function versionInRange(version: string, range: string): boolean {
     // Parse the range - semver library handles complex ranges and prereleases
     return semver.satisfies(version, semverRange, {includePrerelease: true})
   } catch (error) {
-    // Fail closed: if range cannot be parsed, assume version is NOT safe
+    // Fail closed: if range cannot be parsed, assume version IS vulnerable
     core.debug(
       `Failed to parse version range "${range}" for version "${version}": ${error instanceof Error ? error.message : String(error)}`
     )
-    return false
+    return true
   }
 }
 

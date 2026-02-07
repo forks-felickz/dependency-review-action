@@ -1661,16 +1661,16 @@ function versionInRange(version, range) {
         return false;
     try {
         // Convert GitHub API range format to semver format
-        // GitHub uses: ">= 8.0.0, <= 8.0.20" 
+        // GitHub uses: ">= 8.0.0, <= 8.0.20"
         // Semver expects: ">=8.0.0 <=8.0.20"
         const semverRange = range.replace(/,\s*/g, ' ');
         // Parse the range - semver library handles complex ranges and prereleases
         return semver.satisfies(version, semverRange, { includePrerelease: true });
     }
     catch (error) {
-        // Fail closed: if range cannot be parsed, assume version is NOT safe
+        // Fail closed: if range cannot be parsed, assume version IS vulnerable
         core.debug(`Failed to parse version range "${range}" for version "${version}": ${error instanceof Error ? error.message : String(error)}`);
-        return false;
+        return true;
     }
 }
 function extractPatchVersionId(patchData) {
