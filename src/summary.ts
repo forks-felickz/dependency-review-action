@@ -27,8 +27,8 @@ const MAX_SCANNED_FILES_BYTES = 1048576
 // @param options.preNormalized - If true, assumes range is already normalized (comma-to-space conversion done)
 // @param options.failClosed - If true, returns true (vulnerable) on errors; if false, returns false (no match)
 function versionInRange(
-  version: string,
-  range: string,
+  version: string | undefined,
+  range: string | undefined,
   options: {
     preTrimmed?: boolean
     preNormalized?: boolean
@@ -58,9 +58,9 @@ function versionInRange(
     return failClosed
   }
 
-  // Convert GitHub API range format to semver format if not already normalized
+  // Convert GitHub API range format to semver-compatible format if not already normalized
   // GitHub uses: ">= 8.0.0, <= 8.0.20"
-  // Semver expects: ">=8.0.0 <=8.0.20"
+  // Semver accepts: ">= 8.0.0 <= 8.0.20" (operators may be followed by a space)
   const semverRange = preNormalized
     ? trimmedRange
     : trimmedRange.replace(/,\s*/g, ' ')
@@ -315,8 +315,6 @@ export async function addChangeVulnerabilitiesToSummary(
           core.debug(
             `Looking up patch for ${change.name}@${change.version} (${ecoLowercase}) in ${vuln.advisory_ghsa_id}`
           )
-          // Build cache key to avoid re-parsing same version+range combinations
-          const rangeCheckCache = new Map<string, boolean>()
 
           // Find matching entry by ecosystem, package name (case-insensitive), and version range
           let foundEntry:
@@ -326,23 +324,18 @@ export async function addChangeVulnerabilitiesToSummary(
             if (vulnEntry.eco.toLowerCase() !== ecoLowercase) continue
             if (vulnEntry.pkg.toLowerCase() !== packageLowercase) continue
 
-            // Normalize range once and reuse for both cache key and function call
+            // Normalize range once for both cache key and function call
             const trimmedRangeOnce = vulnEntry.range.trim()
-            // Apply same normalization as versionInRange for semantic equality
             const normalizedRange = trimmedRangeOnce.replace(/,\s*/g, ' ')
-            const cacheKey = `${normalizedChangeVersion}:${normalizedRange}`
-            let isInRange = rangeCheckCache.get(cacheKey)
-            if (isInRange === undefined) {
-              // Use fail-open (failClosed: false) for patch selection to avoid
-              // incorrectly matching on invalid ranges
-              // Use preTrimmed and preNormalized optimizations since we've done both
-              isInRange = versionInRange(
-                normalizedChangeVersion,
-                normalizedRange,
-                {preTrimmed: true, preNormalized: true, failClosed: false}
-              )
-              rangeCheckCache.set(cacheKey, isInRange)
-            }
+
+            // Use fail-open (failClosed: false) for patch selection to avoid
+            // incorrectly matching on invalid ranges
+            // Use preTrimmed and preNormalized optimizations since we've done both
+            const isInRange = versionInRange(
+              normalizedChangeVersion,
+              normalizedRange,
+              {preTrimmed: true, preNormalized: true, failClosed: false}
+            )
 
             if (isInRange) {
               foundEntry = vulnEntry
