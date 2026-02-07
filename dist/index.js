@@ -1657,15 +1657,24 @@ const MAX_SCANNED_FILES_BYTES = 1048576;
 // Helper to check if a version falls within a vulnerable range
 // Uses semver library for proper prerelease handling and range parsing
 function versionInRange(version, range) {
-    if (!version || !range)
+    if (!version)
         return false;
+    if (!range) {
+        // Fail closed: treat missing/empty range as unparseable and assume vulnerable
+        core.debug(`Empty or missing version range for version "${version}". Treating as vulnerable (fail closed).`);
+        return true;
+    }
     try {
+        const trimmedVersion = version.trim();
+        const trimmedRange = range.trim();
         // Convert GitHub API range format to semver format
         // GitHub uses: ">= 8.0.0, <= 8.0.20"
         // Semver expects: ">=8.0.0 <=8.0.20"
-        const semverRange = range.replace(/,\s*/g, ' ');
+        const semverRange = trimmedRange.replace(/,\s*/g, ' ');
         // Parse the range - semver library handles complex ranges and prereleases
-        return semver.satisfies(version, semverRange, { includePrerelease: true });
+        return semver.satisfies(trimmedVersion, semverRange, {
+            includePrerelease: true
+        });
     }
     catch (error) {
         // Fail closed: if range cannot be parsed, assume version IS vulnerable
@@ -1829,21 +1838,37 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                         previous_version === change.version;
                     // Look up patch version by matching package name, ecosystem, and version range
                     let patchVer = 'N/A';
-                    const advData = patchInfo[vuln.advisory_ghsa_id];
-                    if (advData && advData.length > 0) {
-                        const normalizedEco = change.ecosystem.toLowerCase();
-                        const pkgNameLower = change.name.toLowerCase();
-                        core.debug(`Looking up patch for ${change.name}@${change.version} (${normalizedEco}) in ${vuln.advisory_ghsa_id}`);
+                    const advisoryEntries = patchInfo[vuln.advisory_ghsa_id];
+                    if (advisoryEntries && advisoryEntries.length > 0) {
+                        const ecoLowercase = change.ecosystem.toLowerCase();
+                        const packageLowercase = change.name.toLowerCase();
+                        core.debug(`Looking up patch for ${change.name}@${change.version} (${ecoLowercase}) in ${vuln.advisory_ghsa_id}`);
+                        // Build cache key to avoid re-parsing same version+range combinations
+                        const rangeCheckCache = new Map();
                         // Find matching entry by ecosystem, package name (case-insensitive), and version range
-                        const matchingEntry = advData.find(entry => entry.eco === normalizedEco &&
-                            entry.pkg.toLowerCase() === pkgNameLower &&
-                            versionInRange(change.version, entry.range));
-                        if (matchingEntry) {
-                            patchVer = matchingEntry.patch;
+                        let foundEntry = null;
+                        for (const vulnEntry of advisoryEntries) {
+                            if (vulnEntry.eco !== ecoLowercase)
+                                continue;
+                            if (vulnEntry.pkg.toLowerCase() !== packageLowercase)
+                                continue;
+                            const cacheKey = `${change.version}|||${vulnEntry.range}`;
+                            let isInRange = rangeCheckCache.get(cacheKey);
+                            if (isInRange === undefined) {
+                                isInRange = versionInRange(change.version, vulnEntry.range);
+                                rangeCheckCache.set(cacheKey, isInRange);
+                            }
+                            if (isInRange) {
+                                foundEntry = vulnEntry;
+                                break;
+                            }
+                        }
+                        if (foundEntry) {
+                            patchVer = foundEntry.patch;
                             core.debug(`Found patch version ${patchVer} for ${change.name}@${change.version}`);
                         }
                         else {
-                            core.debug(`No matching patch found for ${change.name}@${change.version}. Available entries: ${JSON.stringify(advData)}`);
+                            core.debug(`No matching patch found for ${change.name}@${change.version}. Available entries: ${JSON.stringify(advisoryEntries)}`);
                         }
                     }
                     else {
