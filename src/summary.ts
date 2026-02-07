@@ -21,14 +21,18 @@ const MAX_SCANNED_FILES_BYTES = 1048576
 // Helper to check if a version falls within a vulnerable range
 // Uses semver library for proper prerelease handling and range parsing
 function versionInRange(version: string, range: string): boolean {
-  if (!version) {
+  // Trim inputs first to handle whitespace-only strings correctly
+  const trimmedVersion = version?.trim() || ''
+  const trimmedRange = range?.trim() || ''
+
+  if (!trimmedVersion) {
     // Fail closed: treat missing/empty version as unparseable and assume vulnerable
     core.debug(
       `Empty or missing version for range "${range}". Treating as vulnerable (fail closed).`
     )
     return true
   }
-  if (!range) {
+  if (!trimmedRange) {
     // Fail closed: treat missing/empty range as unparseable and assume vulnerable
     core.debug(
       `Empty or missing version range for version "${version}". Treating as vulnerable (fail closed).`
@@ -37,9 +41,6 @@ function versionInRange(version: string, range: string): boolean {
   }
 
   try {
-    const trimmedVersion = version.trim()
-    const trimmedRange = range.trim()
-
     // Convert GitHub API range format to semver format
     // GitHub uses: ">= 8.0.0, <= 8.0.20"
     // Semver expects: ">=8.0.0 <=8.0.20"
@@ -284,12 +285,13 @@ export async function addChangeVulnerabilitiesToSummary(
         if (advisoryEntries && advisoryEntries.length > 0) {
           const ecoLowercase = change.ecosystem.toLowerCase()
           const packageLowercase = change.name.toLowerCase()
+          const normalizedChangeVersion = change.version.trim()
           core.debug(
             `Looking up patch for ${change.name}@${change.version} (${ecoLowercase}) in ${vuln.advisory_ghsa_id}`
           )
           // Build cache key to avoid re-parsing same version+range combinations
           const rangeCheckCache = new Map<string, boolean>()
-          
+
           // Find matching entry by ecosystem, package name (case-insensitive), and version range
           let foundEntry:
             | {eco: string; pkg: string; range: string; patch: string}
@@ -297,25 +299,25 @@ export async function addChangeVulnerabilitiesToSummary(
           for (const vulnEntry of advisoryEntries) {
             if (vulnEntry.eco !== ecoLowercase) continue
             if (vulnEntry.pkg.toLowerCase() !== packageLowercase) continue
-            
-            // Normalize inputs so cache key matches versionInRange semantics
-            const rawVersion = change.version
-            const rawRange = vulnEntry.range
-            const normalizedVersion = rawVersion.trim()
-            const normalizedRange = rawRange.trim()
-            const cacheKey = JSON.stringify([normalizedVersion, normalizedRange])
+
+            // Normalize range and build cache key
+            const normalizedRange = vulnEntry.range.trim()
+            const cacheKey = `${normalizedChangeVersion}:${normalizedRange}`
             let isInRange = rangeCheckCache.get(cacheKey)
             if (isInRange === undefined) {
-              isInRange = versionInRange(normalizedVersion, normalizedRange)
+              isInRange = versionInRange(
+                normalizedChangeVersion,
+                normalizedRange
+              )
               rangeCheckCache.set(cacheKey, isInRange)
             }
-            
+
             if (isInRange) {
               foundEntry = vulnEntry
               break
             }
           }
-          
+
           if (foundEntry) {
             patchVer = foundEntry.patch
             core.debug(
