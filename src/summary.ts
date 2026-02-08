@@ -18,14 +18,18 @@ const icons = {
 
 const MAX_SCANNED_FILES_BYTES = 1048576
 
-// Helper to check if a version falls within a vulnerable range
-// Uses semver library for proper prerelease handling and range parsing
-// @param version - The version to check (can be pre-trimmed)
-// @param range - The version range to check against (can be pre-trimmed and/or pre-normalized)
-// @param options - Configuration options
-// @param options.preTrimmed - If true, assumes inputs are already trimmed (optimization)
-// @param options.preNormalized - If true, assumes range is already normalized (comma-to-space conversion done)
-// @param options.failClosed - If true, returns true (vulnerable) on errors; if false, returns false (no match)
+/**
+ * Helper to check if a version falls within a vulnerable range.
+ * Uses the `semver` library for proper prerelease handling and range parsing.
+ *
+ * @param version - The version to check (can be pre-trimmed).
+ * @param range - The version range to check against (can be pre-trimmed and/or pre-normalized).
+ * @param options - Configuration options.
+ * @param options.preTrimmed - If true, assumes inputs are already trimmed (optimization).
+ * @param options.preNormalized - If true, assumes range is already normalized (comma-to-space conversion done).
+ * @param options.failClosed - If true, returns true (vulnerable) on errors; if false, returns false (no match).
+ * @returns `true` if the version is considered within the vulnerable range (or on fail-closed), otherwise `false`.
+ */
 function versionInRange(
   version: string | undefined,
   range: string | undefined,
@@ -72,7 +76,7 @@ function versionInRange(
 
   if (!validVersion || !validRange) {
     if (failClosed) {
-      const issues = []
+      const issues: string[] = []
       if (!validVersion) issues.push('version')
       if (!validRange) issues.push('version range')
       core.debug(
@@ -325,7 +329,7 @@ export async function addChangeVulnerabilitiesToSummary(
           // Find matching entry by ecosystem, package name (case-insensitive), and version range
           let foundEntry:
             | {eco: string; pkg: string; range: string; patch: string}
-            | undefined = undefined
+            | undefined
           for (const vulnEntry of advisoryEntries) {
             if (vulnEntry.eco.toLowerCase() !== ecoLowercase) continue
             if (vulnEntry.pkg.toLowerCase() !== packageLowercase) continue
