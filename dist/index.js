@@ -1654,6 +1654,7 @@ const icons = {
     warning: '⚠️'
 };
 const MAX_SCANNED_FILES_BYTES = 1048576;
+const API_CONCURRENCY_LIMIT = 10; // Limit concurrent API requests to avoid rate limiting
 /**
  * Helper to check if a version falls within a vulnerable range.
  * Uses the `semver` library for proper prerelease handling and range parsing.
@@ -1691,8 +1692,17 @@ function versionInRange(version, range, options = {}) {
         : trimmedRange.replace(/,\s*/g, ' ');
     // Validate version and range explicitly to enforce fail-closed semantics
     // semver.satisfies() typically returns false for invalid inputs without throwing
-    const validVersion = semver.valid(trimmedVersion);
+    let validVersion = semver.valid(trimmedVersion);
     const validRange = semver.validRange(semverRange);
+    // For fail-open mode (patch selection), try coercing invalid versions
+    // to handle common real-world formats like "8.0", date-based versions, etc.
+    if (!validVersion && !failClosed) {
+        const coerced = semver.coerce(trimmedVersion);
+        if (coerced) {
+            validVersion = coerced.version;
+            core.debug(`Coerced version "${trimmedVersion}" to "${validVersion}" for range matching`);
+        }
+    }
     if (!validVersion || !validRange) {
         if (failClosed) {
             const issues = [];
@@ -1803,6 +1813,38 @@ function countScorecardWarnings(scorecard, config) {
                 : 0);
     }, 0);
 }
+/**
+ * Execute promises with a concurrency limit to avoid overwhelming APIs.
+ * @param tasks - Array of functions that return promises
+ * @param limit - Maximum number of concurrent promises
+ */
+function promisePool(tasks, limit) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const results = [];
+        const executing = [];
+        for (let i = 0; i < tasks.length; i++) {
+            const task = tasks[i];
+            const promise = (() => __awaiter(this, void 0, void 0, function* () {
+                const result = yield task();
+                return { index: i, result };
+            }))();
+            executing.push(promise);
+            if (executing.length >= limit) {
+                const completed = yield Promise.race(executing);
+                results[completed.index] = completed.result;
+                const completedIndex = executing.findIndex(p => p === promise);
+                if (completedIndex !== -1) {
+                    executing.splice(completedIndex, 1);
+                }
+            }
+        }
+        const remaining = yield Promise.all(executing);
+        for (const { index, result } of remaining) {
+            results[index] = result;
+        }
+        return results;
+    });
+}
 function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
     return __awaiter(this, void 0, void 0, function* () {
         if (vulnerableChanges.length === 0) {
@@ -1816,11 +1858,12 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 advisorySet.add(vuln.advisory_ghsa_id);
             }
         }
-        // Query GitHub API for patch info in parallel
+        // Query GitHub API for patch info with concurrency limiting
         // Store all vulnerability entries (may be multiple per package with different ranges)
         const patchInfo = {};
         const apiClient = (0, utils_1.octokitClient)();
-        yield Promise.all(Array.from(advisorySet).map((advId) => __awaiter(this, void 0, void 0, function* () {
+        // Create tasks for promise pool
+        const tasks = Array.from(advisorySet).map(advId => () => __awaiter(this, void 0, void 0, function* () {
             try {
                 core.debug(`Fetching advisory data for ${advId}`);
                 const apiResult = yield apiClient.request('GET /advisories/{ghsa_id}', {
@@ -1855,7 +1898,9 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                 core.debug(`API call failed for ${advId}: ${errorMessage}`);
                 patchInfo[advId] = [];
             }
-        })));
+        }));
+        // Execute API calls with concurrency limit
+        yield promisePool(tasks, API_CONCURRENCY_LIMIT);
         core.summary.addHeading('Vulnerabilities', 2);
         for (const manifest of manifests) {
             // Create fresh rows array for each manifest to avoid accumulation
@@ -1898,7 +1943,11 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                             core.debug(`Found patch version ${patchVer} for ${change.name}@${change.version}`);
                         }
                         else {
-                            core.debug(`No matching patch found for ${change.name}@${change.version}. Available entries: ${JSON.stringify(advisoryEntries)}`);
+                            const maxLoggedEntries = 5;
+                            const entriesPreview = advisoryEntries
+                                .slice(0, maxLoggedEntries)
+                                .map(entry => `${entry.eco}:${entry.pkg} ${entry.range} -> ${entry.patch}`);
+                            core.debug(`No matching patch found for ${change.name}@${change.version}. Available entries (showing up to ${Math.min(advisoryEntries.length, maxLoggedEntries)} of ${advisoryEntries.length}): ${entriesPreview.join('; ')}`);
                         }
                     }
                     else {

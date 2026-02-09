@@ -19,7 +19,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  jest.clearAllMocks()
+  jest.restoreAllMocks()
   core.summary.emptyBuffer()
 })
 
