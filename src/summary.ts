@@ -337,7 +337,7 @@ export async function addChangeVulnerabilitiesToSummary(
               pkg: pkgName,
               range: vulnRange,
               patch: patchVerId,
-              ecoLower: normalizedEco, // Already lowercase
+              ecoLower: normalizedEco, // Ecosystem already normalized to lowercase
               pkgLower: pkgName.toLowerCase(),
               normalizedRange
             })
