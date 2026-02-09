@@ -1821,27 +1821,27 @@ function countScorecardWarnings(scorecard, config) {
 function promisePool(tasks, limit) {
     return __awaiter(this, void 0, void 0, function* () {
         const results = [];
-        const executing = [];
+        const executing = new Map();
         for (let i = 0; i < tasks.length; i++) {
             const task = tasks[i];
-            const promise = (() => __awaiter(this, void 0, void 0, function* () {
+            const index = i;
+            // Wrap task execution to store result and clean up
+            const wrappedPromise = (() => __awaiter(this, void 0, void 0, function* () {
                 const result = yield task();
-                return { index: i, result };
+                results[index] = result;
             }))();
-            executing.push(promise);
-            if (executing.length >= limit) {
-                const completed = yield Promise.race(executing);
-                results[completed.index] = completed.result;
-                const completedIndex = executing.findIndex(p => p === promise);
-                if (completedIndex !== -1) {
-                    executing.splice(completedIndex, 1);
-                }
+            executing.set(wrappedPromise, index);
+            // When promise completes, remove it from the executing set
+            wrappedPromise.finally(() => {
+                executing.delete(wrappedPromise);
+            });
+            // Wait if we've hit the concurrency limit
+            if (executing.size >= limit) {
+                yield Promise.race(executing.keys());
             }
         }
-        const remaining = yield Promise.all(executing);
-        for (const { index, result } of remaining) {
-            results[index] = result;
-        }
+        // Wait for all remaining promises
+        yield Promise.all(executing.keys());
         return results;
     });
 }

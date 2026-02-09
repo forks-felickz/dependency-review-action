@@ -251,32 +251,33 @@ async function promisePool<T>(
   limit: number
 ): Promise<T[]> {
   const results: T[] = []
-  const executing: Promise<{index: number; result: T}>[] = []
+  const executing: Map<Promise<void>, number> = new Map()
 
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i]
-    const promise = (async () => {
+    const index = i
+
+    // Wrap task execution to store result and clean up
+    const wrappedPromise = (async () => {
       const result = await task()
-      return {index: i, result}
+      results[index] = result
     })()
 
-    executing.push(promise)
+    executing.set(wrappedPromise, index)
 
-    if (executing.length >= limit) {
-      const completed = await Promise.race(executing)
-      results[completed.index] = completed.result
-      const completedIndex = executing.findIndex(p => p === promise)
-      if (completedIndex !== -1) {
-        executing.splice(completedIndex, 1)
-      }
+    // When promise completes, remove it from the executing set
+    wrappedPromise.finally(() => {
+      executing.delete(wrappedPromise)
+    })
+
+    // Wait if we've hit the concurrency limit
+    if (executing.size >= limit) {
+      await Promise.race(executing.keys())
     }
   }
 
-  const remaining = await Promise.all(executing)
-  for (const {index, result} of remaining) {
-    results[index] = result
-  }
-
+  // Wait for all remaining promises
+  await Promise.all(executing.keys())
   return results
 }
 
