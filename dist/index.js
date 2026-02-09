@@ -1820,15 +1820,11 @@ function countScorecardWarnings(scorecard, config) {
  */
 function promisePool(tasks, limit) {
     return __awaiter(this, void 0, void 0, function* () {
-        const results = [];
         const executing = new Set();
-        for (let i = 0; i < tasks.length; i++) {
-            const task = tasks[i];
-            const index = i;
-            // Wrap task execution to store result and clean up
+        for (const task of tasks) {
+            // Execute task and clean up
             const wrappedPromise = (() => __awaiter(this, void 0, void 0, function* () {
-                const result = yield task();
-                results[index] = result;
+                yield task();
             }))();
             executing.add(wrappedPromise);
             // When promise completes, remove it from the executing set
@@ -1842,7 +1838,6 @@ function promisePool(tasks, limit) {
         }
         // Wait for all remaining promises
         yield Promise.all(executing);
-        return results;
     });
 }
 function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
@@ -1860,6 +1855,7 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
         }
         // Query GitHub API for patch info with concurrency limiting
         // Store all vulnerability entries (may be multiple per package with different ranges)
+        // Pre-normalize ecosystem, package name, and range to avoid repeated work in rendering
         const patchInfo = {};
         const apiClient = (0, utils_1.octokitClient)();
         // Create tasks for promise pool
@@ -1879,11 +1875,17 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                         const vulnRange = v.vulnerable_version_range || '';
                         const patchVerId = extractPatchVersionId(v.first_patched_version);
                         if (patchVerId) {
+                            // Pre-normalize and cache values to avoid repeated work in rendering loop
+                            const trimmedRange = vulnRange.trim();
+                            const normalizedRange = trimmedRange.replace(/,\s*/g, ' ');
                             patchInfo[advId].push({
                                 eco: normalizedEco,
                                 pkg: pkgName,
                                 range: vulnRange,
-                                patch: patchVerId
+                                patch: patchVerId,
+                                ecoLower: normalizedEco, // Already lowercase
+                                pkgLower: pkgName.toLowerCase(),
+                                normalizedRange
                             });
                             core.debug(`Added patch info for ${pkgName} (${normalizedEco}): ${patchVerId} for range ${vulnRange}`);
                         }
@@ -1920,19 +1922,17 @@ function addChangeVulnerabilitiesToSummary(vulnerableChanges, severity) {
                         const normalizedChangeVersion = change.version.trim();
                         core.debug(`Looking up patch for ${change.name}@${change.version} (${ecoLowercase}) in ${vuln.advisory_ghsa_id}`);
                         // Find matching entry by ecosystem, package name (case-insensitive), and version range
+                        // Use pre-normalized values from cache to avoid repeated lowercasing and range conversion
                         let foundEntry;
                         for (const vulnEntry of advisoryEntries) {
-                            if (vulnEntry.eco.toLowerCase() !== ecoLowercase)
+                            if (vulnEntry.ecoLower !== ecoLowercase)
                                 continue;
-                            if (vulnEntry.pkg.toLowerCase() !== packageLowercase)
+                            if (vulnEntry.pkgLower !== packageLowercase)
                                 continue;
-                            // Normalize range once for both cache key and function call
-                            const trimmedRangeOnce = vulnEntry.range.trim();
-                            const normalizedRange = trimmedRangeOnce.replace(/,\s*/g, ' ');
                             // Use fail-open (failClosed: false) for patch selection to avoid
                             // incorrectly matching on invalid ranges
                             // Use preTrimmed and preNormalized optimizations since we've done both
-                            const isInRange = versionInRange(normalizedChangeVersion, normalizedRange, { preTrimmed: true, preNormalized: true, failClosed: false });
+                            const isInRange = versionInRange(normalizedChangeVersion, vulnEntry.normalizedRange, { preTrimmed: true, preNormalized: true, failClosed: false });
                             if (isInRange) {
                                 foundEntry = vulnEntry;
                                 break;
