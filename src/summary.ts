@@ -251,7 +251,7 @@ async function promisePool<T>(
   limit: number
 ): Promise<T[]> {
   const results: T[] = []
-  const executing: Map<Promise<void>, number> = new Map()
+  const executing: Set<Promise<void>> = new Set()
 
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i]
@@ -263,7 +263,7 @@ async function promisePool<T>(
       results[index] = result
     })()
 
-    executing.set(wrappedPromise, index)
+    executing.add(wrappedPromise)
 
     // When promise completes, remove it from the executing set
     wrappedPromise.finally(() => {
@@ -272,12 +272,12 @@ async function promisePool<T>(
 
     // Wait if we've hit the concurrency limit
     if (executing.size >= limit) {
-      await Promise.race(executing.keys())
+      await Promise.race(executing)
     }
   }
 
   // Wait for all remaining promises
-  await Promise.all(executing.keys())
+  await Promise.all(executing)
   return results
 }
 

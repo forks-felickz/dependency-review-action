@@ -1821,7 +1821,7 @@ function countScorecardWarnings(scorecard, config) {
 function promisePool(tasks, limit) {
     return __awaiter(this, void 0, void 0, function* () {
         const results = [];
-        const executing = new Map();
+        const executing = new Set();
         for (let i = 0; i < tasks.length; i++) {
             const task = tasks[i];
             const index = i;
@@ -1830,18 +1830,18 @@ function promisePool(tasks, limit) {
                 const result = yield task();
                 results[index] = result;
             }))();
-            executing.set(wrappedPromise, index);
+            executing.add(wrappedPromise);
             // When promise completes, remove it from the executing set
             wrappedPromise.finally(() => {
                 executing.delete(wrappedPromise);
             });
             // Wait if we've hit the concurrency limit
             if (executing.size >= limit) {
-                yield Promise.race(executing.keys());
+                yield Promise.race(executing);
             }
         }
         // Wait for all remaining promises
-        yield Promise.all(executing.keys());
+        yield Promise.all(executing);
         return results;
     });
 }
