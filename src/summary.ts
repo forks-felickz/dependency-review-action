@@ -146,10 +146,10 @@ export function addSummaryToSummary(
   out.push('# Dependency Review')
 
   const hasIssues =
-    vulnerableChanges.length > 0 ||
-    licenseIssues > 0 ||
+    (config.vulnerability_check && vulnerableChanges.length > 0) ||
+    (config.license_check && licenseIssues > 0) ||
     deniedChanges.length > 0 ||
-    scorecardWarnings > 0
+    (config.show_openssf_scorecard && scorecardWarnings > 0)
 
   const showFixesSection = config.show_fixes_in_summary && fixedVulns.length > 0
 
